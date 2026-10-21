@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+node_modules/
+.npm-cache/
+data/
+uploads/
+coverage/
+*.log
+npm-debug.log*

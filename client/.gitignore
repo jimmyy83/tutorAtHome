@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.vite/
+coverage/
+*.log
+npm-debug.log*
+vite.config.*.timestamp-*.mjs
