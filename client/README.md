@@ -2,7 +2,7 @@
 
 ## Connect to the API
 
-Copy `.env.example` to `.env` and set `VITE_API_BASE_URL` to the backend API prefix. For local development this is `http://localhost:4000/api`. The backend defaults to port `4000` and allows the Vite origin `http://localhost:5173`.
+Set `VITE_API_BASE_URL` to the backend API prefix. For local development this is `http://localhost:4000/api`. The backend defaults to port `4000` and allows the Vite origin `http://localhost:5173`. Production uses `https://tutorathomed.onrender.com/api` as a fallback; set the same value in Vercel to make the deployment configuration explicit.
 
 Run the backend from `../backend` after creating its own `.env` from `backend/.env.example`. Keep `JWT_SECRET`, `CAPTCHA_SECRET`, and admin credentials on the server only. If CAPTCHA is enabled on the backend, set the matching public provider and site key in the frontend `.env`.
 
