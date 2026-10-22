@@ -39,14 +39,14 @@ export default function TeacherRegistration(){
   setError('');
   if(direction<0){setStep(s=>Math.max(0,s-1));return;}
   const ok=await trigger(stepFields[step]);if(!ok)return;
-  if(step<steps.length-1){setStep(s=>s+1);window.scrollTo({top:0,behavior:'smooth'});return;}
+  if(step<steps.length-1){setStep(s=>s+1);window.scrollTo({top:0,behavior:'auto'});return;}
   const values=getValues();
   if(!values.termsAccepted){setError('Please accept the terms before submitting.');return;}
   if(values.fees.maxMonthly<values.fees.minMonthly){setError('Maximum monthly fee must be at least the minimum fee.');return;}
   setBusy(true);
   const payload={...values,academics:{...values.academics,certifications:(values.academics.certificationsText||'').split(',').map(v=>v.trim()).filter(Boolean)}};delete payload.academics.certificationsText;
   const postgrad=payload.academics.postgraduation||{};for(const field of ['degree','university','year','score'])if(postgrad[field]===''||postgrad[field]===undefined||Number.isNaN(postgrad[field]))delete postgrad[field];if(!Object.keys(postgrad).length)delete payload.academics.postgraduation;
-  try{const response=await api.post(ENDPOINTS.teacherRegistrations,payload,{captchaToken:captchaToken||undefined});setResult({...response,applicantName:values.personal.fullName});window.scrollTo({top:0,behavior:'smooth'});}
+  try{const response=await api.post(ENDPOINTS.teacherRegistrations,payload,{captchaToken:captchaToken||undefined});setResult({...response,applicantName:values.personal.fullName});window.scrollTo({top:0,behavior:'auto'});}
   catch(e){setError(e.message);}
   finally{setBusy(false);}
  };

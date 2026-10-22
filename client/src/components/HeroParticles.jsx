@@ -9,9 +9,9 @@ export default function HeroParticles(){
   const canvas=canvasRef.current,context=canvas?.getContext('2d');
   if(!canvas||!context)return;
   const reduceMotion=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let width=0,height=0,frame=0,visible=!document.hidden,startedAt=performance.now();
+  let width=0,height=0,frame=0,inViewport=false,startedAt=performance.now();
   let pointerX=0,pointerY=0,targetX=0,targetY=0,particles=[];
-  const resize=()=>{
+  const resize=()=>{cancelAnimationFrame(frame);frame=0;
    const rect=canvas.getBoundingClientRect();width=rect.width;height=rect.height;
    const ratio=Math.min(window.devicePixelRatio||1,1.5);
    canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);
@@ -41,13 +41,14 @@ export default function HeroParticles(){
     if(distance<maxLink){context.strokeStyle=`rgba(151,196,235,${(1-distance/maxLink)*.105})`;context.lineWidth=.7;context.beginPath();context.moveTo(a.x,a.y);context.lineTo(b.x,b.y);context.stroke();}
    }
    projected.forEach(point=>{context.beginPath();context.arc(point.x,point.y,point.radius,0,Math.PI*2);context.fillStyle=point.tone==='white'?`rgba(255,255,255,${point.alpha*.55})`:point.tone==='blue'?`rgba(133,163,205,${point.alpha*.6})`:`rgba(255,105,122,${point.alpha})`;context.fill();});
-   if(!reduceMotion&&visible)frame=requestAnimationFrame(draw);
+   if(!reduceMotion&&inViewport&&!document.hidden)frame=requestAnimationFrame(draw);
   };
-  const onPointerMove=e=>{targetX=(e.clientX/Math.max(window.innerWidth,1)-.5)*2;targetY=(e.clientY/Math.max(window.innerHeight,1)-.5)*2;};
-  const onVisibility=()=>{visible=!document.hidden;if(visible&&!reduceMotion){cancelAnimationFrame(frame);frame=requestAnimationFrame(draw);}else cancelAnimationFrame(frame);};
+  const onPointerMove=e=>{if(!inViewport)return;targetX=(e.clientX/Math.max(window.innerWidth,1)-.5)*2;targetY=(e.clientY/Math.max(window.innerHeight,1)-.5)*2;};
+  const onVisibility=()=>{if(!document.hidden&&inViewport&&!reduceMotion){cancelAnimationFrame(frame);frame=requestAnimationFrame(draw);}else{cancelAnimationFrame(frame);frame=0;}};
+  const viewportObserver=new IntersectionObserver(([entry])=>{inViewport=entry.isIntersecting;if(inViewport)draw(performance.now());else{cancelAnimationFrame(frame);frame=0;}},{rootMargin:"100px"});viewportObserver.observe(canvas);
   const observer=new ResizeObserver(resize);observer.observe(canvas);
   window.addEventListener('pointermove',onPointerMove,{passive:true});document.addEventListener('visibilitychange',onVisibility);
-  return()=>{observer.disconnect();window.removeEventListener('pointermove',onPointerMove);document.removeEventListener('visibilitychange',onVisibility);cancelAnimationFrame(frame);};
+  return()=>{observer.disconnect();viewportObserver.disconnect();window.removeEventListener('pointermove',onPointerMove);document.removeEventListener('visibilitychange',onVisibility);cancelAnimationFrame(frame);};
  },[]);
  return <canvas ref={canvasRef} aria-hidden="true" className="hero-particles"/>;
 }

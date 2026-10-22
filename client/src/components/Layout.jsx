@@ -13,7 +13,7 @@ const navItems=[['/teachers','Find a tutor'],['/#how-it-works','How it works'],[
 function Navbar({brandName,logoUrl}){
  const [open,setOpen]=useState(false);const [scrolled,setScrolled]=useState(()=>typeof window!=='undefined'&&window.scrollY>24);const location=useLocation();const toggleRef=useRef(null);
  useEffect(()=>{setOpen(false);},[location.pathname,location.hash]);
- useEffect(()=>{let scheduled=false;let compact=window.scrollY>24;const update=()=>{if(scheduled)return;scheduled=true;window.requestAnimationFrame(()=>{const y=window.scrollY;if(y>24)compact=true;else if(y<8)compact=false;setScrolled(compact);scheduled=false;});};window.addEventListener('scroll',update,{passive:true});return()=>window.removeEventListener('scroll',update);},[]);
+ useEffect(()=>{let scheduled=false;let compact=window.scrollY>24;const update=()=>{if(scheduled)return;scheduled=true;window.requestAnimationFrame(()=>{const y=window.scrollY;const next=y>24?true:y<8?false:compact;if(next!==compact){compact=next;setScrolled(next);}scheduled=false;});};window.addEventListener('scroll',update,{passive:true});return()=>window.removeEventListener('scroll',update);},[]);
  useEffect(()=>{if(!open)return;document.getElementById('mobile-navigation')?.querySelector('nav a')?.focus();const onKey=e=>{if(e.key==='Escape'){setOpen(false);toggleRef.current?.focus();}};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey);},[open]);
  const activeAnchor=location.pathname==='/'?location.hash:'';
  const closeMenu=()=>{setOpen(false);toggleRef.current?.focus();};
