@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { storeCloudMedia, validateImageFile } from './imageAssets.js';
 import { v2 as cloudinary } from 'cloudinary';
@@ -55,11 +58,15 @@ test('turns a failed Cloudinary upload into a safe server error', async () => {
 });
 
 test('Cloudinary enabled without credentials fails startup with a safe configuration error', () => {
-  const env = { ...process.env, NODE_ENV: 'test', CLOUDINARY_ENABLED: 'true' };
+  const isolatedEnvDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tutorathome-env-test-'));
+  const envFile = path.join(isolatedEnvDir, '.env');
+  fs.writeFileSync(envFile, '');
+  const env = { ...process.env, NODE_ENV: 'test', CLOUDINARY_ENABLED: 'true', DOTENV_CONFIG_PATH: envFile };
   delete env.CLOUDINARY_CLOUD_NAME;
   delete env.CLOUDINARY_API_KEY;
   delete env.CLOUDINARY_API_SECRET;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', "import('./src/config.js')"], { cwd: new URL('..', import.meta.url), env, encoding: 'utf8' });
+  fs.rmSync(isolatedEnvDir, { recursive: true, force: true });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET are required/);
   assert.doesNotMatch(result.stderr, /mongodb\+srv:\/\/|password=[^<\s]/i);

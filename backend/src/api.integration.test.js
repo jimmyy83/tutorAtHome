@@ -76,12 +76,38 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
 
     const enquiryResponse = await fetch(`${base}/api/public/parent-enquiries`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
       parentName: 'Integration Parent', phone: '9876543210', studentName: 'Student', studentClass: '10', board: 'CBSE',
-      subjects: ['Mathematics'], examPreparations: [], city: 'Prayagraj', mode: 'online', preferredDays: [], notes: 'Test record',
+      subjects: ['Mathematics'], examPreparations: [], city: 'Prayagraj', mode: 'online', preferredDays: [], notes: 'Test record', website: '',
     }) });
     assert.equal(enquiryResponse.status, 201);
     const enquiry = await enquiryResponse.json();
     assert.match(enquiry.reference, /^ENQ-/);
     assert.equal(await col('enquiries').countDocuments({ reference: enquiry.reference }), 1);
+    assert.equal('website' in JSON.parse((await col('enquiries').findOne({ reference: enquiry.reference })).data), false);
+    const honeypotResponse = await fetch(`${base}/api/public/parent-enquiries`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      parentName: 'Bot submission', phone: '9876543210', studentName: 'Student', studentClass: '10', board: 'CBSE',
+      subjects: ['Mathematics'], examPreparations: [], city: 'Prayagraj', mode: 'online', preferredDays: [], website: 'https://spam.example',
+    }) });
+    assert.equal(honeypotResponse.status, 400);
+    assert.equal(await col('enquiries').countDocuments({}), 1);
+
+    const teacherPayload = {
+      website: '',
+      personal: { fullName: 'Integration Teacher', gender: 'Other', dob: '1990-01-01', phone: '+919876543211', email: 'teacher-integration@example.test', address: 'Private test address', pincode: '211001', ownVehicle: false },
+      academics: { class10: { board: 'CBSE', year: 2006, score: '80%' }, class12: { board: 'CBSE', year: 2008, score: '80%' }, graduation: { degree: 'BA', university: 'Test University', year: 2011, score: '80%' }, certifications: [] },
+      teaching: { classes: ['10'], subjects: ['Mathematics'], medium: 'English', experienceYears: 5, previousInstitutions: '', preferredAreas: '', homeTuition: true, commute: 'Vehicle' },
+      availability: { days: ['Monday'], timeSlots: ['Evening'], teachingStyle: '', freeDemo: false, references: '' },
+      fees: { minMonthly: 1000, maxMonthly: 2000, paymentModes: ['UPI'] }, termsAccepted: true,
+    };
+    const teacherResponse = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(teacherPayload) });
+    assert.equal(teacherResponse.status, 201);
+    const teacher = await teacherResponse.json();
+    assert.match(teacher.reference, /^TCH-/);
+    const savedTeacher = await col('teachers').findOne({ reference: teacher.reference });
+    assert.ok(savedTeacher);
+    assert.equal('website' in JSON.parse(savedTeacher.data), false);
+    const duplicateTeacherResponse = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(teacherPayload) });
+    assert.equal(duplicateTeacherResponse.status, 409);
+    assert.equal(await col('teachers').countDocuments({ reference: teacher.reference }), 1);
 
     const badLoginResponse = await fetch(`${base}/api/admin/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: process.env.ADMIN_EMAIL, password: 'incorrect-password' }) });
     assert.equal(badLoginResponse.status, 401);

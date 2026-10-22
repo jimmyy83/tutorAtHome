@@ -11,8 +11,6 @@ export const config = {
   dbPath: env.DB_PATH || './data/tutorathome.db',
   mongoUri: env.MONGODB_URI || '',
   mongoDbName: env.MONGODB_DB_NAME || 'tutorathome',
-  captchaProvider: (env.CAPTCHA_PROVIDER || '').toLowerCase(),
-  captchaSecret: env.CAPTCHA_SECRET || '',
   cloudinaryCloudName: env.CLOUDINARY_CLOUD_NAME || '',
   cloudinaryApiKey: env.CLOUDINARY_API_KEY || '',
   cloudinaryApiSecret: env.CLOUDINARY_API_SECRET || '',
@@ -24,7 +22,6 @@ if (config.isProd) {
   if (config.jwtSecret === 'change-me' || looksLikePlaceholder(config.jwtSecret) || config.jwtSecret.length < 32) throw new Error('JWT_SECRET must be set to a private strong value (32+ chars) in production');
   if (!config.mongoUri) throw new Error('MONGODB_URI is required in production.');
   if (looksLikePlaceholder(config.mongoUri)) throw new Error('MONGODB_URI still contains an example placeholder. Set the protected Atlas connection string in production.');
-  if (!['turnstile', 'recaptcha'].includes(config.captchaProvider) || !config.captchaSecret || looksLikePlaceholder(config.captchaSecret)) throw new Error('CAPTCHA_PROVIDER must be turnstile or recaptcha, and CAPTCHA_SECRET must be set in production');
   if ([env.ADMIN_EMAIL, env.ADMIN_PASSWORD].some(value => value && looksLikePlaceholder(value))) throw new Error('Replace placeholder ADMIN_EMAIL and ADMIN_PASSWORD values before production.');
   if (!env.CORS_ORIGINS?.trim()) throw new Error('CORS_ORIGINS must contain the deployed frontend origin in production.');
   for (const origin of config.corsOrigins) {

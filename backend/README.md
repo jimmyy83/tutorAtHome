@@ -4,7 +4,7 @@ Node 20+ · Express 5 · MongoDB Node.js driver · JWT · Zod.
 
 ## Setup
 
-1. `cp .env.example .env` and set `MONGODB_URI`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `CORS_ORIGINS`, and the CAPTCHA settings used by your deployment. For image uploads, set `CLOUDINARY_ENABLED=true` and the three Cloudinary values in `.env`.
+1. `cp .env.example .env` and set `MONGODB_URI`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `CORS_ORIGINS`. For image uploads, set `CLOUDINARY_ENABLED=true` and the three Cloudinary values in `.env`.
 2. `npm install`
 3. `npm start`
 
@@ -30,13 +30,12 @@ Set the `sync: false` values in the Render dashboard. Do not paste real credenti
 | `JWT_EXPIRES_IN` | Optional; defaults to `8h`. |
 | `CORS_ORIGINS` | Required in production; exact HTTPS Vercel origin(s). |
 | `PUBLIC_API_URL` | Required in production; HTTPS Render origin, no path. |
-| `CAPTCHA_PROVIDER`, `CAPTCHA_SECRET` | Required in production; provider is `turnstile` or `recaptcha`. |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Needed only to create the first admin when the database has no admin account. Password is bcrypt-hashed. |
 | `CLOUDINARY_ENABLED` | Defaults to enabled in production; Render config sets it to `true`. If enabled, the three Cloudinary values below are required. |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Required when Cloudinary uploads are enabled. Keep the API secret server-side only. |
-| `FORM_RATE_LIMIT_MAX`, `FORM_RATE_LIMIT_WINDOW_MIN` | Optional; default to 5 requests per 15 minutes. |
+| `FORM_RATE_LIMIT_MAX`, `FORM_RATE_LIMIT_WINDOW_MIN` | Optional; default to 5 public form requests per 15 minutes. Forms also include a server-checked honeypot field. |
 
-On Vercel, set `VITE_API_BASE_URL` to `<Render HTTPS origin>/api`. Set `VITE_CAPTCHA_PROVIDER` to the same public provider and `VITE_CAPTCHA_SITE_KEY` (or `VITE_TURNSTILE_SITE_KEY`) to the provider's public site key. Never add `JWT_SECRET`, `MONGODB_URI`, `CAPTCHA_SECRET`, admin passwords, or Cloudinary API secrets to Vercel `VITE_` variables.
+On Vercel, set `VITE_API_BASE_URL` to `<Render HTTPS origin>/api`. Never add `JWT_SECRET`, `MONGODB_URI`, admin passwords, or Cloudinary API secrets to Vercel `VITE_` variables.
 
 ## Existing SQLite data migration
 
@@ -50,6 +49,6 @@ To seed demo teachers during development only, run `npm run seed` with a configu
 
 Teacher profile photos are edited from the admin Teachers tab. The owner photo is part of the existing homepage content editor and takes effect after publishing. Campaign images are managed in the Campaigns editor. Teacher and campaign references are updated before old Cloudinary media is considered for deletion; owner photos retained in content revisions remain available for restore.
 
-Production requires a strong `JWT_SECRET` (32+ characters), `MONGODB_URI`, and configured `CAPTCHA_PROVIDER`/`CAPTCHA_SECRET`. Never commit `.env` or place database credentials in source code.
+Production requires a strong `JWT_SECRET` (32+ characters) and `MONGODB_URI`. Never commit `.env` or place database credentials in source code.
 
 See [API.md](./API.md) for the HTTP contract.

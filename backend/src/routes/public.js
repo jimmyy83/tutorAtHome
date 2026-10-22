@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { col, json, now, nextId, escapeRegex } from '../db.js';
-import { wrap, validate, formLimiter, verifyCaptcha, HttpError } from '../middleware.js';
+import { wrap, validate, formLimiter, rejectHoneypot, HttpError } from '../middleware.js';
 import { parentEnquirySchema, teacherRegistrationSchema } from '../schemas.js';
 import crypto from 'node:crypto';
 import { optimizedCloudImage } from '../cloudinary.js';
@@ -100,12 +100,12 @@ const validateEducationSelection = async (req, _res, next) => {
     next();
   } catch (error) { next(error); }
 };
-publicRouter.post('/parent-enquiries', formLimiter, verifyCaptcha, validate(parentEnquirySchema), validateEducationSelection, wrap(async (req, res) => {
+publicRouter.post('/parent-enquiries', formLimiter, rejectHoneypot, validate(parentEnquirySchema), validateEducationSelection, wrap(async (req, res) => {
   const d = req.body, reference = ref('ENQ'), timestamp = now(), id = await nextId('enquiries');
   await col('enquiries').insertOne({ id, reference, status: 'new', data: JSON.stringify(d), parent_name: d.parentName, phone: d.phone, student_class: d.studentClass, city: d.city, created_at: timestamp, updated_at: timestamp });
   res.status(201).json({ reference, message: 'Your enquiry is with our team. We will check tutor availability for your selected city and area and confirm with you.' });
 }));
-publicRouter.post('/teacher-registrations', formLimiter, verifyCaptcha, validate(teacherRegistrationSchema), wrap(async (req, res) => {
+publicRouter.post('/teacher-registrations', formLimiter, rejectHoneypot, validate(teacherRegistrationSchema), wrap(async (req, res) => {
   const d = req.body, email = d.personal.email.toLowerCase(), phone = d.personal.phone;
   const dup = await col('teachers').findOne({ status: { $ne: 'rejected' }, $or: [{ email }, { phone }] });
   if (dup) return res.status(409).json({ error: { code: 'DUPLICATE', message: 'An application with this email or mobile number already exists.' } });

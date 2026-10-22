@@ -2,7 +2,6 @@
 
 Base URL: `http://localhost:4000/api` (frontend env: `VITE_API_BASE_URL`). JSON bodies unless noted.
 Errors: `{ "error": { "code", "message", "fields?": { "path": "message" } } }`. Rate limit: **429** + `Retry-After` header + `retryAfterSeconds`.
-CAPTCHA: send the token in header `X-Captcha-Token` (or body `captchaToken`) on public POSTs. Verified server-side.
 
 ## Public
 | Method | Path | Notes |
@@ -10,8 +9,8 @@ CAPTCHA: send the token in header `X-Captcha-Token` (or body `captchaToken`) on 
 | GET | /public/site | `{ settings, content (published), publishedAt, banners (active) }`. `settings.socialLinks` contains active links only, sorted by `order`, with public fields `id,platform,label,url,icon,placement,order`; timestamps and inactive links are omitted. |
 | GET | /public/banners | Active, enabled, non-archived, in schedule, ordered by priority. `dismissKey` changes whenever the admin edits a banner. |
 | GET | /public/teachers | Query: `search, subject, level, location, page, limit(max 48), featured=false`. Defaults to approved + featured; `featured=false` returns all approved teachers. Returns `id,name,location,photoUrl,subjects,levels` only. |
-| POST | /public/parent-enquiries | CAPTCHA + rate limited. Accepts `studentClass`, `board`, optional `streamId` (required for Class 11–12), `subjects[]`, `examPreparations[]`, `city`, `locality`, `mode` and existing schedule/budget fields. Class, stream, subject and exam selections are checked against the active CMS education catalogue. A home-mode address is stored privately in the enquiry record; it is not returned through public APIs. `201 { reference }` |
-| POST | /public/teacher-registrations | CAPTCHA + rate limited. `201 { reference }`; `409 DUPLICATE` for same email/phone. |
+| POST | /public/parent-enquiries | Rate limited; includes a hidden server-checked spam honeypot. Accepts `studentClass`, `board`, optional `streamId` (required for Class 11–12), `subjects[]`, `examPreparations[]`, `city`, `locality`, `mode` and existing schedule/budget fields. Class, stream, subject and exam selections are checked against the active CMS education catalogue. A home-mode address is stored privately in the enquiry record; it is not returned through public APIs. `201 { reference }` |
+| POST | /public/teacher-registrations | Rate limited; includes a hidden server-checked spam honeypot. `201 { reference }`; `409 DUPLICATE` for same email/phone. |
 
 ## Admin (`Authorization: Bearer <jwt>`)
 Roles: `admin` (everything), `editor` (content, banners, media, featured teachers, enquiries; cannot approve teachers or change settings).
