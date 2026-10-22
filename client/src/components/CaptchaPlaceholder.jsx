@@ -15,7 +15,16 @@ function loadProvider(provider){
  return scripts[provider];
 }
 
-export default function CaptchaPlaceholder({onToken=()=>{}}){
+function turnstileErrorMessage(code){
+ const value=String(code||'');
+ if(value==='110200')return 'This website address is not enabled for CAPTCHA. Please contact support.';
+ if(['110100','110110','400020','400021','400070'].includes(value))return 'CAPTCHA is not configured correctly. Please contact support.';
+ if(value==='200500')return 'Could not connect to Cloudflare verification. Check your connection and try again.';
+ if(['110600','110620'].includes(value))return 'Verification timed out. Please try again.';
+ return 'Verification failed. Please try again.';
+}
+
+export default function CaptchaPlaceholder({onToken=()=>{},resetKey=0}){
  const ref=useRef(null);const tokenHandler=useRef(onToken);tokenHandler.current=onToken;const [message,setMessage]=useState('');
  useEffect(()=>{
   const provider=env.captchaProvider;const siteKey=env.captchaSiteKey;
@@ -23,11 +32,11 @@ export default function CaptchaPlaceholder({onToken=()=>{}}){
   let widgetId;let disposed=false;
   loadProvider(provider).then(api=>{
    if(disposed||!ref.current||!api)return;
-   const callbacks={callback:token=>{tokenHandler.current(token);setMessage('');},'expired-callback':()=>tokenHandler.current(''),'error-callback':()=>{tokenHandler.current('');setMessage('Verification failed. Please try again.');}};
+  const callbacks={callback:token=>{tokenHandler.current(token);setMessage('');},'expired-callback':()=>{tokenHandler.current('');setMessage('Verification expired. Please complete it again.');},'error-callback':code=>{tokenHandler.current('');setMessage(provider==='turnstile'?turnstileErrorMessage(code):'Verification failed. Please try again.');}};
    widgetId=provider==='turnstile'?api.render(ref.current,{sitekey:siteKey,...callbacks}):api.render(ref.current,{sitekey:siteKey,...callbacks});
   }).catch(()=>{if(!disposed)setMessage('Verification could not load. Check your connection and try again.');});
   return()=>{disposed=true;tokenHandler.current('');if(widgetId){if(provider==='turnstile')window.turnstile?.remove(widgetId);else window.grecaptcha?.reset(widgetId);}};
- },[]);
+ },[resetKey]);
  if(!['turnstile','recaptcha'].includes(env.captchaProvider)||!env.captchaSiteKey)return <p className="text-xs leading-5 text-slate-500">Bot verification is handled by the server when configured.</p>;
  return <div className="captcha-box"><div ref={ref} aria-label="Security verification"/>{message&&<p role="alert" className="mt-2 text-xs text-red-700">{message}</p>}</div>;
 }

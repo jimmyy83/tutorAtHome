@@ -1,7 +1,7 @@
 import {env} from '../config/env.js';
 
 export class ApiError extends Error{
- constructor(message,status,retryAfter,fields){super(message);this.status=status;this.retryAfter=retryAfter;this.fields=fields||{};}
+ constructor(message,status,retryAfter,fields,code){super(message);this.status=status;this.retryAfter=retryAfter;this.fields=fields||{};this.code=code||'';}
 }
 
 async function request(method,path,{body,signal,timeout=15000,captchaToken,authToken}={}){
@@ -14,7 +14,7 @@ async function request(method,path,{body,signal,timeout=15000,captchaToken,authT
   const res=await fetch(env.apiBaseUrl+path,{method,headers,body:body&&(isFormData?body:JSON.stringify(body)),signal:ctl.signal});
   if(res.status===429){const retryAfter=res.headers.get('Retry-After');throw new ApiError(`Too many requests. Please try again${retryAfter?` in ${retryAfter} seconds`:' shortly'}.`,429,retryAfter);}
   const payload=res.status===204?null:await res.json().catch(()=>null);
-  if(!res.ok){const error=payload?.error||{};throw new ApiError(error.message||(res.status>=500?'The server had a problem. Please try again later.':'The request could not be completed.'),res.status,res.headers.get('Retry-After'),error.fields);}
+  if(!res.ok){const error=payload?.error||{};throw new ApiError(error.message||(res.status>=500?'The server had a problem. Please try again later.':'The request could not be completed.'),res.status,res.headers.get('Retry-After'),error.fields,error.code);}
   return payload;
  }catch(err){if(err instanceof ApiError)throw err;if(err.name==='AbortError')throw new ApiError(signal?.aborted?'Cancelled':'The request timed out.',0);if(err instanceof TypeError)throw new ApiError(`Cannot reach the API at ${env.apiBaseUrl}. Check that the backend is running and local CORS allows this origin.`,0);throw new ApiError('The API request could not be completed.',0);}
  finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
