@@ -10,6 +10,34 @@ Node 20+ · Express 5 · MongoDB Node.js driver · JWT · Zod.
 
 The API requires MongoDB at startup and exits with a configuration/connection error if it is unavailable. It never falls back to SQLite. MongoDB indexes are created on startup. Admin passwords continue to use bcrypt; admin sessions are signed JWTs and are not persisted in a separate session collection.
 
+### Deliberate local admin password reset
+
+To reset an existing local admin, set `NODE_ENV=development`, point `MONGODB_URI` at a loopback MongoDB server (`localhost`, `127.0.0.1`, or `::1`), set `MONGODB_DB_NAME`, set `ADMIN_EMAIL` to the existing admin email, and set `ADMIN_PASSWORD` to the new password (12+ characters). Then explicitly run `npm run admin:reset-password -- --confirm` from `backend`. The script updates only that existing admin's bcrypt hash, verifies the new hash, and never creates an account. It refuses production and all non-loopback MongoDB hosts. Normal server startup never resets passwords.
+
+## Render deployment
+
+The repository-root `render.yaml` defines the backend service with `NODE_ENV=production`, `npm ci`, `npm start`, and `/api/health`. Render supplies `PORT`; do not set a fixed `PORT` for the web service. The process binds to `0.0.0.0` and uses `process.env.PORT`, with port 4000 only as a local fallback.
+
+Set the `sync: false` values in the Render dashboard. Do not paste real credentials into `render.yaml` or commit any `.env` file. `CORS_ORIGINS` must be the exact deployed Vercel origin(s), comma-separated when needed, with no path. `PUBLIC_API_URL` must be the Render service's HTTPS origin without `/api`; media URLs use this origin. The actual Vercel and Render URLs are intentionally placeholders in `.env.example` until deployment assigns them.
+
+| Variable | Requirement |
+| --- | --- |
+| `PORT` | Render-managed; optional locally, where it defaults to 4000. |
+| `NODE_ENV` | Set to `production` on Render. |
+| `MONGODB_URI` | Required at startup; keep it in Render's protected environment. |
+| `MONGODB_DB_NAME` | Optional; defaults to `tutorathome`. |
+| `JWT_SECRET` | Required in production; at least 32 characters and privately generated. |
+| `JWT_EXPIRES_IN` | Optional; defaults to `8h`. |
+| `CORS_ORIGINS` | Required in production; exact HTTPS Vercel origin(s). |
+| `PUBLIC_API_URL` | Required in production; HTTPS Render origin, no path. |
+| `CAPTCHA_PROVIDER`, `CAPTCHA_SECRET` | Required in production; provider is `turnstile` or `recaptcha`. |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Needed only to create the first admin when the database has no admin account. Password is bcrypt-hashed. |
+| `CLOUDINARY_ENABLED` | Defaults to enabled in production; Render config sets it to `true`. If enabled, the three Cloudinary values below are required. |
+| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Required when Cloudinary uploads are enabled. Keep the API secret server-side only. |
+| `FORM_RATE_LIMIT_MAX`, `FORM_RATE_LIMIT_WINDOW_MIN` | Optional; default to 5 requests per 15 minutes. |
+
+On Vercel, set `VITE_API_BASE_URL` to `<Render HTTPS origin>/api`. Set `VITE_CAPTCHA_PROVIDER` to the same public provider and `VITE_CAPTCHA_SITE_KEY` (or `VITE_TURNSTILE_SITE_KEY`) to the provider's public site key. Never add `JWT_SECRET`, `MONGODB_URI`, `CAPTCHA_SECRET`, admin passwords, or Cloudinary API secrets to Vercel `VITE_` variables.
+
 ## Existing SQLite data migration
 
 Do not delete the SQLite file or its backups. Set `MONGODB_URI` in the local backend environment, install dependencies, then run:

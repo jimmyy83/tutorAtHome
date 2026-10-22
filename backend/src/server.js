@@ -25,9 +25,16 @@ export async function bootstrap() {
   if (!await col('content').findOne({ id: 1 })) {
     const c = JSON.stringify(defaultContent); await col('content').insertOne({ id: 1, draft: c, published: c, draft_updated_at: now(), published_at: now() });
   }
-  if (!await col('admins').findOne({}) && process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
-    await col('admins').insertOne({ id: await nextId('admins'), email: process.env.ADMIN_EMAIL.toLowerCase(), name: 'Administrator', password_hash: await bcrypt.hash(process.env.ADMIN_PASSWORD, 12), role: 'admin', created_at: now() });
-    console.log(`Created initial admin: ${process.env.ADMIN_EMAIL}`);
+  if (!await col('admins').findOne({})) {
+    const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+    const adminPassword = process.env.ADMIN_PASSWORD;
+    if (!adminEmail || !adminPassword) {
+      if (config.isProd) throw new Error('No admin account exists. Set ADMIN_EMAIL and ADMIN_PASSWORD in the backend environment to provision the first admin.');
+    } else {
+      if (adminPassword.length < 12) throw new Error('ADMIN_PASSWORD must be at least 12 characters when provisioning the first admin.');
+      await col('admins').insertOne({ id: await nextId('admins'), email: adminEmail, name: 'Administrator', password_hash: await bcrypt.hash(adminPassword, 12), role: 'admin', created_at: now() });
+      console.log('Created initial admin account.');
+    }
   }
 }
 
@@ -47,7 +54,7 @@ app.use(errorHandler);
 if (process.argv[1] && path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1])) {
   try {
     await connectDb(); await bootstrap();
-    const server = app.listen(config.port, () => console.log(`TutorAtHome API on :${config.port}`));
+    const server = app.listen(config.port, '0.0.0.0', () => console.log(`TutorAtHome API listening on ${config.port}`));
     const shutdown = async () => { server.close(); await closeDb(); process.exit(0); };
     process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
   } catch (error) {

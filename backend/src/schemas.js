@@ -81,7 +81,7 @@ export const teacherRegistrationSchema = z.object({
   termsAccepted: z.literal(true, { error: 'You must accept the terms and conditions.' }),
 }).strict();
 
-export const loginSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
+export const loginSchema = z.object({ email: z.string().trim().email(), password: z.string().min(1) });
 
 export const bannerSchema = z.object({
   title: req('Title', 140), message: str(1000).optional().default(''),

@@ -18,6 +18,7 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
   process.env.ADMIN_EMAIL = 'integration-admin@example.test';
   process.env.ADMIN_PASSWORD = 'OnlyForThisIsolatedTestDb!234';
   process.env.NODE_ENV = 'test';
+  process.env.CORS_ORIGINS = 'http://localhost:5173,https://tutor-at-home.vercel.app';
   process.env.CLOUDINARY_ENABLED = 'true';
   process.env.CLOUDINARY_CLOUD_NAME = 'tutorathome-test';
   process.env.CLOUDINARY_API_KEY = 'test-key';
@@ -34,6 +35,12 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     server = app.listen(0);
     await new Promise(resolve => server.once('listening', resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
+    for (const origin of ['http://localhost:5173', 'https://tutor-at-home.vercel.app']) {
+      const preflight = await fetch(`${base}/api/admin/auth/login`, { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' } });
+      assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
+    }
+    const untrustedPreflight = await fetch(`${base}/api/admin/auth/login`, { method: 'OPTIONS', headers: { origin: 'https://untrusted.example', 'access-control-request-method': 'POST' } });
+    assert.equal(untrustedPreflight.headers.get('access-control-allow-origin'), null);
     await col('teachers').insertMany([
       { id: 9101, reference: 'TCH-TEST-FEATURED', status: 'approved', full_name: 'Featured Public Tutor', email: 'private@example.test', phone: '9000000001', featured: 1, featured_order: 1, public_name: 'Featured Public Tutor', public_location: 'Naini', location_state_id: 'up-test', location_district_id: 'prayagraj-test', location_locality_id: 'naini-test', public_photo: 'https://example.test/tutor.jpg', public_photo_id: 'tutorathome/teachers/test-photo', public_subjects: '["Mathematics"]', public_levels: '["10"]' },
       { id: 9102, reference: 'TCH-TEST-APPROVED', status: 'approved', full_name: 'Approved Public Tutor', email: 'private2@example.test', phone: '9000000002', featured: 0, featured_order: 0, public_name: 'Approved Public Tutor', public_location: 'Lucknow', public_photo: '', public_subjects: '["Science"]', public_levels: '["9"]' },
@@ -76,7 +83,14 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     assert.match(enquiry.reference, /^ENQ-/);
     assert.equal(await col('enquiries').countDocuments({ reference: enquiry.reference }), 1);
 
-    const loginResponse = await fetch(`${base}/api/admin/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD }) });
+    const badLoginResponse = await fetch(`${base}/api/admin/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: process.env.ADMIN_EMAIL, password: 'incorrect-password' }) });
+    assert.equal(badLoginResponse.status, 401);
+    const wrongEmailResponse = await fetch(`${base}/api/admin/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'missing-admin@example.test', password: process.env.ADMIN_PASSWORD }) });
+    assert.equal(wrongEmailResponse.status, 401);
+    const storedAdmin = await col('admins').findOne({ email: process.env.ADMIN_EMAIL });
+    assert.match(storedAdmin.password_hash, /^\$2[aby]\$/);
+    assert.notEqual(storedAdmin.password_hash, process.env.ADMIN_PASSWORD);
+    const loginResponse = await fetch(`${base}/api/admin/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: ` ${process.env.ADMIN_EMAIL.toUpperCase()} `, password: process.env.ADMIN_PASSWORD }) });
     assert.equal(loginResponse.status, 200);
     const { token } = await loginResponse.json(); assert.ok(token);
     const settingsResponse = await fetch(`${base}/api/admin/settings`, { headers: { authorization: `Bearer ${token}` } });
@@ -101,6 +115,12 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
       parentName: 'Invalid City', phone: '9876543210', studentName: 'Student', studentClass: '10', board: 'CBSE', subjects: ['Math'], city: 'Kanpur', mode: 'online',
     }) });
     assert.equal(invalidCity.status, 422);
+
+    const adminRecord = await col('admins').findOne({ email: process.env.ADMIN_EMAIL });
+    await col('admins').deleteOne({ id: adminRecord.id });
+    const missingAdminResponse = await fetch(`${base}/api/admin/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD }) });
+    assert.equal(missingAdminResponse.status, 401);
+    await col('admins').insertOne(adminRecord);
 
     const SQL = await initSqlJs(), sqlite = new SQL.Database();
     sqlite.exec(`CREATE TABLE admins(id INTEGER PRIMARY KEY,email TEXT,name TEXT,password_hash TEXT,role TEXT,created_at TEXT);

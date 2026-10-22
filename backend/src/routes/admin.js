@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import bcrypt from 'bcryptjs';
 import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -10,12 +9,12 @@ import * as S from '../schemas.js';
 import { bannerRow } from './public.js';
 import { requireCloudinary } from '../cloudinary.js';
 import { cleanupUnreferencedCloudImage, localImageReferenced, storeCloudMedia } from '../imageAssets.js';
+import { authenticateAdmin } from '../adminAuth.js';
 
 export const adminRouter = Router();
 adminRouter.post('/auth/login', loginLimiter, validate(S.loginSchema), wrap(async (req, res) => {
-  const a = await col('admins').findOne({ email: req.body.email.toLowerCase() });
-  const ok = await bcrypt.compare(req.body.password, a?.password_hash || '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvali');
-  if (!a || !ok) throw new HttpError(401, 'Incorrect email or password.');
+  const a = await authenticateAdmin(req.body.email, req.body.password, email => col('admins').findOne({ email }));
+  if (!a) throw new HttpError(401, 'Incorrect email or password.');
   res.json({ token: signToken({ ...a, id: a.id }), admin: { id: a.id, email: a.email, name: a.name, role: a.role } });
 }));
 const auth = requireAdmin(), editor = requireAdmin(['admin', 'editor']), superAdmin = requireAdmin(['admin']);
