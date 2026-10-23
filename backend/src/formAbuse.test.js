@@ -11,6 +11,7 @@ const parent = {
 const teacher = {
   website: '',
   personal: { fullName: 'Test Teacher', gender: 'Other', dob: '1990-01-01', phone: '+919876543210', email: 'teacher@example.test', address: 'Private address', pincode: '211001', ownVehicle: false },
+  location: { stateId: 'up-test', districtId: 'prayagraj-test', localityId: 'naini-test', locality: 'Naini' },
   academics: { class10: { board: 'CBSE', year: 2006, score: '80%' }, class12: { board: 'CBSE', year: 2008, score: '80%' }, graduation: { degree: 'BA', university: 'Test University', year: 2011, score: '80%' }, certifications: [] },
   teaching: { classes: ['10'], subjects: ['Mathematics'], medium: 'English', experienceYears: 5, previousInstitutions: '', preferredAreas: '', homeTuition: true, commute: 'Vehicle' },
   availability: { days: ['Monday'], timeSlots: ['Evening'], teachingStyle: '', freeDemo: false, references: '' },
@@ -69,6 +70,32 @@ test('invalid enquiry data and filled honeypot are rejected before persistence',
     runMiddleware(rejectHoneypot, { ...parent, website: 'https://spam.example' }),
     error => error instanceof HttpError && error.status === 400,
   );
+});
+
+test('parent enquiry accepts complete coordinates, allows no map pin, and rejects invalid or incomplete coordinates', async () => {
+  const valid = await runFormValidation({ ...parent, mode: 'home', locality: 'Naini', homeAddress: 'Sample address', pincode: '211008', latitude: 25.995, longitude: -80.0 }, parentEnquirySchema);
+  assert.equal(valid.passed, true);
+  const noPin = await runFormValidation({ ...parent, mode: 'home', locality: 'Naini', homeAddress: 'Sample address', pincode: '211008' }, parentEnquirySchema);
+  assert.equal(noPin.passed, true);
+  await assert.rejects(runMiddleware(validate(parentEnquirySchema), { ...parent, latitude: 91, longitude: 80 }), error => error instanceof HttpError && error.status === 422 && !!error.details.latitude);
+  await assert.rejects(runMiddleware(validate(parentEnquirySchema), { ...parent, latitude: 25, longitude: -181 }), error => error instanceof HttpError && error.status === 422 && !!error.details.longitude);
+  await assert.rejects(runMiddleware(validate(parentEnquirySchema), { ...parent, latitude: null, longitude: null }), error => error instanceof HttpError && error.status === 422);
+  await assert.rejects(runMiddleware(validate(parentEnquirySchema), { ...parent, latitude: '', longitude: '' }), error => error instanceof HttpError && error.status === 422);
+  await assert.rejects(runMiddleware(validate(parentEnquirySchema), { ...parent, latitude: 25 }), error => error instanceof HttpError && error.status === 422 && !!error.details.longitude);
+});
+
+test('teacher consent must be present and exactly true at the backend schema boundary', async () => {
+  await assert.rejects(runMiddleware(validate(teacherRegistrationSchema), { ...teacher, termsAccepted: false }), error => error instanceof HttpError && error.status === 422 && !!error.details.termsAccepted);
+  const { termsAccepted: _omitted, ...withoutConsent } = teacher;
+  await assert.rejects(runMiddleware(validate(teacherRegistrationSchema), withoutConsent), error => error instanceof HttpError && error.status === 422 && !!error.details.termsAccepted);
+});
+
+test('teacher registration requires structured location and a valid Indian PIN code', async () => {
+  const { location: _location, ...withoutLocation } = teacher;
+  await assert.rejects(runMiddleware(validate(teacherRegistrationSchema), withoutLocation), error => error instanceof HttpError && error.status === 422 && !!error.details.location);
+  const { locality, ...legacyCityLocation } = teacher.location;
+  await assert.rejects(runMiddleware(validate(teacherRegistrationSchema), { ...teacher, location: { ...legacyCityLocation, city: locality } }), error => error instanceof HttpError && error.status === 422 && !!error.details['location.locality']);
+  await assert.rejects(runMiddleware(validate(teacherRegistrationSchema), { ...teacher, personal: { ...teacher.personal, pincode: '012345' } }), error => error instanceof HttpError && error.status === 422 && !!error.details['personal.pincode']);
 });
 
 test('public form rate limiting still rejects submissions over the configured limit', async () => {

@@ -3,6 +3,7 @@ import { z } from 'zod';
 const phone = z.string().trim().regex(/^\+?[0-9]{10,14}$/, 'Enter a valid mobile number (10–14 digits, optional +country code).');
 const str = (max = 200) => z.string().trim().max(max);
 const req = (label, max = 200) => str(max).min(1, `${label} is required.`);
+const coordinate = (min, max) => z.union([z.number(), z.string().trim().min(1)]).pipe(z.coerce.number().finite().min(min).max(max)).optional();
 const year = z.coerce.number().int().min(1960).max(new Date().getFullYear() + 1);
 const edu = z.object({ board: req('Board'), year, score: req('Percentage/grade', 20) });
 const degree = z.object({ degree: req('Degree'), university: req('University'), year, score: req('CGPA/percentage', 20) });
@@ -22,14 +23,20 @@ export const parentEnquirySchema = z.object({
   colony: str(120).optional().default(''),
   landmark: str(120).optional().default(''),
   pincode: z.string().regex(/^[0-9]{6}$/, 'PIN code must be 6 digits.').optional(),
-  latitude: z.coerce.number().min(-90).max(90).optional(),
-  longitude: z.coerce.number().min(-180).max(180).optional(),
+  latitude: coordinate(-90, 90),
+  longitude: coordinate(-180, 180),
   mode: z.enum(['home', 'online']),
   preferredDays: z.array(str(20)).max(7).default([]),
   preferredTiming: str(120).optional().default(''),
   budget: z.coerce.number().int().min(0).max(1000000).optional(),
   notes: str(1500).optional().default(''),
 }).strict().partial({ budget: true }).superRefine((enquiry, ctx) => {
+  const hasLatitude = enquiry.latitude !== undefined;
+  const hasLongitude = enquiry.longitude !== undefined;
+  if (hasLatitude !== hasLongitude) {
+    const missingField = hasLatitude ? 'longitude' : 'latitude';
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [missingField], message: 'Choose both map coordinates or leave the map pin unset.' });
+  }
   const senior = ['11', '12'].includes(enquiry.studentClass);
   if (senior && !enquiry.streamId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['streamId'], message: 'Choose a stream for Class 11 or 12.' });
   if (!senior && enquiry.streamId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['streamId'], message: 'Streams are available for Class 11 and 12.' });
@@ -48,7 +55,7 @@ export const teacherRegistrationSchema = z.object({
     phone,
     email: z.string().trim().email('Enter a valid email address.').max(160),
     address: req('Address', 300), landmark: str(120).optional().default(''),
-    pincode: z.string().regex(/^[0-9]{6}$/, 'PIN code must be 6 digits.'),
+    pincode: z.string().regex(/^[1-9][0-9]{5}$/, 'Enter a valid 6-digit Indian PIN code.'),
     ownVehicle: z.boolean(),
   }),
   academics: z.object({
@@ -78,7 +85,8 @@ export const teacherRegistrationSchema = z.object({
     maxMonthly: z.coerce.number().int().min(0).max(1000000),
     paymentModes: z.array(z.enum(['Cash', 'UPI', 'Bank Transfer'])).min(1, 'Select at least one payment mode.'),
   }).refine((f) => f.maxMonthly >= f.minMonthly, { message: 'Maximum fee must be at least the minimum fee.', path: ['maxMonthly'] }),
-  termsAccepted: z.literal(true, { error: 'You must accept the terms and conditions.' }),
+  location: z.object({ stateId: req('State'), districtId: req('District'), localityId: req('Village / Colony / Locality'), locality: req('Village / Colony / Locality', 120) }).strict(),
+  termsAccepted: z.literal(true, { error: 'You must agree to the Terms & Conditions before submitting.' }),
 }).strict();
 
 export const loginSchema = z.object({ email: z.string().trim().email(), password: z.string().min(1) });

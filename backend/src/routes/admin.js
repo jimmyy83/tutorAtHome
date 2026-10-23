@@ -7,7 +7,7 @@ import { config } from '../config.js';
 import { wrap, validate, requireAdmin, signToken, loginLimiter, HttpError } from '../middleware.js';
 import * as S from '../schemas.js';
 import { bannerRow } from './public.js';
-import { requireCloudinary } from '../cloudinary.js';
+import { privateTeacherAssetDownloadUrl, requireCloudinary } from '../cloudinary.js';
 import { cleanupUnreferencedCloudImage, localImageReferenced, storeCloudMedia } from '../imageAssets.js';
 import { authenticateAdmin } from '../adminAuth.js';
 
@@ -128,6 +128,31 @@ adminRouter.get('/teachers/:id', auth, wrap(async (req, res) => {
   const t = await col('teachers').findOne({ id: toId(req.params.id) }); if (!t) throw new HttpError(404, 'Teacher not found.');
   res.json({ ...teacherListRow(t), application: json(t.data), reviewedBy: t.reviewed_by, reviewedAt: t.reviewed_at });
 }));
+adminRouter.get('/teachers/:id/documents/:kind', editor, requireCloudinary, wrap(async (req, res) => {
+  const field = ({ 'profile-photo': 'profilePhoto', 'qualification-proof': 'qualificationProof' })[req.params.kind];
+  if (!field) throw new HttpError(404, 'Teacher document not found.');
+  const teacher = await col('teachers').findOne({ id: toId(req.params.id) }); if (!teacher) throw new HttpError(404, 'Teacher not found.');
+  const document = json(teacher.data, {})?.documents?.[field];
+  if (!document?.publicId || !document?.format || !['image', 'raw'].includes(document.resourceType)) throw new HttpError(404, 'Teacher document not found.');
+  const downloadUrl = privateTeacherAssetDownloadUrl(document.publicId, document.format, document.resourceType, Math.floor(Date.now() / 1000) + 60);
+  if (!downloadUrl) throw new HttpError(503, 'Private document storage is not available.');
+  let upstream, bytes;
+  try {
+    upstream = await fetch(downloadUrl, { signal: AbortSignal.timeout(10000) });
+    if (!upstream.ok) throw new Error('download failed');
+    const declaredSize = Number(upstream.headers.get('content-length') || 0);
+    if (declaredSize > 5 * 1024 * 1024) throw new Error('invalid size');
+    bytes = Buffer.from(await upstream.arrayBuffer());
+  } catch { throw new HttpError(502, 'The private document could not be retrieved. Please try again.'); }
+  if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new HttpError(502, 'The private document could not be retrieved. Please try again.');
+  const name = String(document.originalName || 'teacher-document').replace(/[\\"\r\n]/g, '_');
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Type', document.mimeType);
+  res.setHeader('Content-Length', String(bytes.length));
+  res.setHeader('Content-Disposition', `attachment; filename="${name}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.send(bytes);
+}));
 adminRouter.post('/teachers/:id/photo', editor, requireCloudinary, upload.single('file'), wrap(async (req, res) => {
   const filter = { id: toId(req.params.id) }, teacher = await col('teachers').findOne(filter); if (!teacher) throw new HttpError(404, 'Teacher not found.');
   const asset = await storeCloudMedia(req.file, 'teachers');
@@ -151,6 +176,20 @@ adminRouter.patch('/teachers/:id/status', superAdmin, validate(S.teacherStatusSc
   const { status } = req.body, r = await col('teachers').updateOne({ id: toId(req.params.id) }, { $set: { status, reviewed_by: req.admin.name || req.admin.email, reviewed_at: now(), ...(status !== 'approved' ? { featured: 0 } : {}) } });
   if (!r.matchedCount) throw new HttpError(404, 'Teacher not found.'); res.json({ ok: true });
 }));
+async function publicPhotoFromApplication(teacher) {
+  const profile = json(teacher.data, {})?.documents?.profilePhoto;
+  if (!profile?.publicId || !profile?.format || !['image/jpeg', 'image/png'].includes(profile.mimeType)) throw new HttpError(409, 'This teacher has no valid professional photo available to feature.');
+  const downloadUrl = privateTeacherAssetDownloadUrl(profile.publicId, profile.format, 'image', Math.floor(Date.now() / 1000) + 60);
+  if (!downloadUrl) throw new HttpError(503, 'The teacher photo could not be prepared for public display.');
+  let response, buffer;
+  try {
+    response = await fetch(downloadUrl, { signal: AbortSignal.timeout(10000) });
+    if (!response.ok || Number(response.headers.get('content-length') || 0) > 5 * 1024 * 1024) throw new Error('download failed');
+    buffer = Buffer.from(await response.arrayBuffer());
+  } catch { throw new HttpError(502, 'The teacher photo could not be retrieved for public display. Please try again.'); }
+  if (!buffer.length || buffer.length > 5 * 1024 * 1024) throw new HttpError(502, 'The teacher photo could not be retrieved for public display. Please try again.');
+  return storeCloudMedia({ buffer, size: buffer.length, mimetype: profile.mimeType, originalname: profile.originalName || 'teacher-profile' }, 'teachers');
+}
 adminRouter.patch('/teachers/:id/featured', editor, validate(S.teacherFeaturedSchema), wrap(async (req, res) => {
   const filter = { id: toId(req.params.id) }, t = await col('teachers').findOne(filter); if (!t) throw new HttpError(404, 'Teacher not found.');
   const b = req.body; if (b.featured && t.status !== 'approved') throw new HttpError(409, 'Only approved teachers can be featured.');
@@ -165,12 +204,16 @@ adminRouter.patch('/teachers/:id/featured', editor, validate(S.teacherFeaturedSc
     if (!serviceLocation) throw new HttpError(422, 'Choose an active, publicly serviceable teacher location.');
     }
   }
-  const nextPhoto = b.publicPhoto !== undefined ? b.publicPhoto : t.public_photo;
-  const nextPhotoId = b.publicPhotoId !== undefined ? b.publicPhotoId : b.publicPhoto !== undefined ? null : t.public_photo_id;
-  await col('teachers').updateOne(filter, { $set: { featured: b.featured === undefined ? t.featured : b.featured ? 1 : 0, featured_order: b.featuredOrder ?? t.featured_order,
+  const copiedProfilePhoto = b.featured === true && b.publicPhoto === undefined && b.publicPhotoId === undefined && !t.public_photo_id && !t.public_photo ? await publicPhotoFromApplication(t) : null;
+  const nextPhoto = b.publicPhoto !== undefined ? b.publicPhoto : copiedProfilePhoto?.secure_url ?? t.public_photo;
+  const nextPhotoId = b.publicPhotoId !== undefined ? b.publicPhotoId : b.publicPhoto !== undefined ? null : copiedProfilePhoto?.public_id ?? t.public_photo_id;
+  let updated;
+  try { updated = await col('teachers').updateOne(filter, { $set: { featured: b.featured === undefined ? t.featured : b.featured ? 1 : 0, featured_order: b.featuredOrder ?? t.featured_order,
     public_name: b.publicName ?? t.public_name, public_location: b.locationStateId !== undefined && !serviceLocation ? null : serviceLocation?.name ?? b.publicLocation ?? t.public_location, public_photo: nextPhoto, public_photo_id: nextPhotoId,
     ...(b.locationStateId !== undefined ? (serviceLocation ? { location_state_id: String(b.locationStateId), location_district_id: String(b.locationDistrictId), location_locality_id: String(b.locationLocalityId) } : { location_state_id: null, location_district_id: null, location_locality_id: null }) : {}),
-    public_subjects: b.publicSubjects ? JSON.stringify(b.publicSubjects) : t.public_subjects, public_levels: b.publicLevels ? JSON.stringify(b.publicLevels) : t.public_levels } });
+    public_subjects: b.publicSubjects ? JSON.stringify(b.publicSubjects) : t.public_subjects, public_levels: b.publicLevels ? JSON.stringify(b.publicLevels) : t.public_levels } }); }
+  catch (error) { if (copiedProfilePhoto?.public_id) await cleanupUnreferencedCloudImage(copiedProfilePhoto.public_id); throw error; }
+  if (!updated.matchedCount) { if (copiedProfilePhoto?.public_id) await cleanupUnreferencedCloudImage(copiedProfilePhoto.public_id); throw new HttpError(404, 'Teacher not found.'); }
   if (t.public_photo_id && t.public_photo_id !== nextPhotoId) await cleanupUnreferencedCloudImage(t.public_photo_id);
   res.json({ ok: true });
 }));

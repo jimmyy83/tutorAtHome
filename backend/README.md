@@ -49,6 +49,8 @@ To seed demo teachers during development only, run `npm run seed` with a configu
 
 Teacher profile photos are edited from the admin Teachers tab. The owner photo is part of the existing homepage content editor and takes effect after publishing. Campaign images are managed in the Campaigns editor. Teacher and campaign references are updated before old Cloudinary media is considered for deletion; owner photos retained in content revisions remain available for restore.
 
+Teacher registration uploads use the existing backend Cloudinary credentials. The required professional photo and highest-qualification proof are signature-checked and limited to 5 MB each; the assets are uploaded with authenticated delivery and are not exposed through public APIs. Editors retrieve them through the authenticated `/api/admin/teachers/:id/documents/:kind` routes. The form submits multipart data with an `application` JSON field plus `profilePhoto` and `qualificationProof` files. Terms acceptance is validated server-side and recorded with a server timestamp and terms version.
+
 Production requires a strong `JWT_SECRET` (32+ characters) and `MONGODB_URI`. Never commit `.env` or place database credentials in source code.
 
 See [API.md](./API.md) for the HTTP contract.

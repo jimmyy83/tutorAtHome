@@ -3,7 +3,9 @@ import { col, json, now, nextId, escapeRegex } from '../db.js';
 import { wrap, validate, formLimiter, rejectHoneypot, HttpError } from '../middleware.js';
 import { parentEnquirySchema, teacherRegistrationSchema } from '../schemas.js';
 import crypto from 'node:crypto';
-import { optimizedCloudImage } from '../cloudinary.js';
+import { deletePrivateTeacherAsset, optimizedCloudImage, requireCloudinary, uploadPrivateTeacherAsset } from '../cloudinary.js';
+import { parseTeacherApplication, teacherRegistrationUpload, TEACHER_TERMS_VERSION, validateTeacherRegistrationFiles } from '../teacherRegistrationFiles.js';
+import { publicQualification } from '../teacherProfile.js';
 
 export const publicRouter = Router();
 const ref = (p) => `${p}-${new Date().getFullYear()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
@@ -47,41 +49,68 @@ const locationRows = async () => {
   const catalog = json(row?.data, {})?.locationCatalog;
   return Array.isArray(catalog?.states) ? catalog.states : [];
 };
-publicRouter.get('/locations', wrap(async (_req, res) => {
+publicRouter.get('/locations', wrap(async (req, res) => {
+  const includeUnserviceable = req.query.audience === 'teacher-registration';
   const states = (await locationRows()).filter(s => s?.active === true).map(s => ({
     id: String(s.id), name: s.name,
     districts: (Array.isArray(s.districts) ? s.districts : []).filter(d => d?.active === true).map(d => ({
       id: String(d.id), name: d.name,
-      localities: (Array.isArray(d.localities) ? d.localities : []).filter(l => l?.active === true && l?.publiclyServiceable === true).map(l => ({ id: String(l.id), name: l.name })),
+      localities: (Array.isArray(d.localities) ? d.localities : []).filter(l => l?.active === true && (includeUnserviceable || l?.publiclyServiceable === true)).map(l => ({ id: String(l.id), name: l.name })),
     })),
   }));
   res.json({ items: states });
 }));
-const publicTeacher = (t) => ({ id: t.id, name: t.public_name || t.full_name, location: t.public_location || '', photoUrl: t.public_photo_id ? (optimizedCloudImage(t.public_photo_id, { width: 384, height: 384, crop: 'fill' }) || t.public_photo || '') : t.public_photo || '', subjects: json(t.public_subjects, []), levels: json(t.public_levels, []) });
+const publicPhotoUrl = teacher => {
+  const optimized = teacher.public_photo_id ? optimizedCloudImage(teacher.public_photo_id, { width: 384, height: 384, crop: 'fill' }) : '';
+  const fallback = typeof teacher.public_photo === 'string' ? teacher.public_photo : '';
+  try { return new URL(optimized || fallback).protocol === 'https:' ? optimized || fallback : ''; } catch { return ''; }
+};
+const publicTeacher = (t) => ({ id: t.id, name: t.public_name || t.full_name, location: t.public_location || '', photoUrl: publicPhotoUrl(t), qualification: publicQualification(t), subjects: json(t.public_subjects, []), levels: json(t.public_levels, []) });
 publicRouter.get('/teachers', wrap(async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1), limit = Math.min(48, Math.max(1, Number(req.query.limit) || 12));
   const featuredOnly = req.query.featured !== 'false';
-  const filter = { status: 'approved', ...(featuredOnly ? { featured: { $in: [true, 1] } } : {}) };
+  const filter = { status: 'approved', ...(featuredOnly ? { featured: { $in: [true, 1] }, $or: [{ public_photo_id: { $type: 'string', $ne: '' } }, { public_photo: { $type: 'string', $ne: '' } }] } : {}) };
   const { search, subject, level, location, stateId, districtId, localityId } = req.query;
   const rx = (v) => new RegExp(escapeRegex(v), 'i');
+  const states = await locationRows();
+  const serviceLocations = states.filter(s => s?.active === true).flatMap(s => (s.districts || []).filter(d => d?.active === true).flatMap(d => (d.localities || []).filter(l => l?.active === true && l?.publiclyServiceable === true).map(l => ({ stateId: String(s.id), districtId: String(d.id), localityId: String(l.id) }))));
+  const selectedState = stateId ? states.find(s => s?.active === true && String(s.id) === String(stateId)) : null;
+  const selectedDistrict = districtId ? selectedState?.districts?.find(d => d?.active === true && String(d.id) === String(districtId)) : null;
+  const selectedLocality = localityId ? selectedDistrict?.localities?.find(l => l?.active === true && l?.publiclyServiceable === true && String(l.id) === String(localityId)) : null;
+  if ((stateId && !selectedState) || (districtId && !selectedDistrict) || (localityId && !selectedLocality)) return res.status(422).json({ error: { code: 'INVALID_LOCATION', message: 'Choose an active state, district and serviceable locality in that order.' } });
+  const matchingServiceLocations = serviceLocations.filter(item => (!stateId || item.stateId === String(stateId)) && (!districtId || item.districtId === String(districtId)) && (!localityId || item.localityId === String(localityId)));
+  if (!matchingServiceLocations.length) return res.json({ items: [], page, limit, total: 0, totalPages: 0 });
+  filter.$and = [...(filter.$and || []), { $or: matchingServiceLocations.map(item => ({ location_state_id: item.stateId, location_district_id: item.districtId, location_locality_id: item.localityId })) }];
   if (search) filter.$and = [...(filter.$and || []), { $or: [{ public_name: rx(search) }, { full_name: rx(search) }, { public_location: rx(search) }, { public_subjects: rx(search) }] }];
   if (subject) filter.public_subjects = rx(`"${subject}"`);
   if (level) filter.public_levels = rx(`"${level}"`);
   if (location) filter.public_location = rx(location);
-  if (stateId) filter.location_state_id = String(stateId);
-  if (districtId) filter.location_district_id = String(districtId);
-  if (localityId) filter.location_locality_id = String(localityId);
-  if (stateId || districtId || localityId) {
-    const states = await locationRows();
-    const state = states.find(s => s?.active === true && String(s.id) === String(stateId));
-    const district = state?.districts?.find(d => d?.active === true && String(d.id) === String(districtId));
-    const locality = district?.localities?.find(l => l?.active === true && l?.publiclyServiceable === true && String(l.id) === String(localityId));
-    if (!state || !district || !locality) return res.status(422).json({ error: { code: 'INVALID_LOCATION', message: 'Choose an active, serviceable state, district and locality.' } });
-  }
   const sort = featuredOnly ? { featured_order: 1, id: -1 } : { id: -1 };
-  const [total, docs] = await Promise.all([col('teachers').countDocuments(filter), col('teachers').find(filter, { projection: { id: 1, full_name: 1, public_name: 1, public_location: 1, public_photo: 1, public_photo_id: 1, public_subjects: 1, public_levels: 1 } }).sort(sort).skip((page - 1) * limit).limit(limit).toArray()]);
+  if (featuredOnly) {
+    const docs = await col('teachers').find(filter, { projection: { id: 1, data: 1, full_name: 1, public_name: 1, public_location: 1, public_photo: 1, public_photo_id: 1, public_subjects: 1, public_levels: 1 } }).sort(sort).toArray();
+    const eligible = docs.map(publicTeacher).filter(t => t.name?.trim() && t.photoUrl && t.qualification);
+    const total = eligible.length, start = (page - 1) * limit;
+    return res.json({ items: eligible.slice(start, start + limit), page, limit, total, totalPages: Math.ceil(total / limit) });
+  }
+  const [total, docs] = await Promise.all([col('teachers').countDocuments(filter), col('teachers').find(filter, { projection: { id: 1, data: 1, full_name: 1, public_name: 1, public_location: 1, public_photo: 1, public_photo_id: 1, public_subjects: 1, public_levels: 1 } }).sort(sort).skip((page - 1) * limit).limit(limit).toArray()]);
   res.json({ items: docs.map(publicTeacher), page, limit, total, totalPages: Math.ceil(total / limit) });
 }));
+const validateTeacherRegistrationLocation = wrap(async (req, _res, next) => {
+  const submitted = req.body.location, states = await locationRows();
+  const state = states.find(item => item?.active === true && String(item.id) === submitted.stateId);
+  const district = state?.districts?.find(item => item?.active === true && String(item.id) === submitted.districtId);
+  const locality = district?.localities?.find(item => item?.active === true && String(item.id) === submitted.localityId);
+  if (!state || !district || !locality || locality.name.trim().toLocaleLowerCase() !== submitted.locality.trim().toLocaleLowerCase()) {
+    const fields = {};
+    if (!state) fields['location.stateId'] = 'Choose an active state.';
+    if (!district) fields['location.districtId'] = 'Choose a district in the selected state.';
+    if (!locality) fields['location.localityId'] = 'Choose a village, colony or locality in the selected district.';
+    if (locality && locality.name.trim().toLocaleLowerCase() !== submitted.locality.trim().toLocaleLowerCase()) fields['location.locality'] = 'The locality must match the selected catalog entry.';
+    throw new HttpError(422, 'Choose a locality that belongs to the selected district.', fields);
+  }
+  req.body.location = { stateId: String(state.id), state: state.name, districtId: String(district.id), district: district.name, localityId: String(locality.id), locality: locality.name };
+  next();
+});
 const validateEducationSelection = async (req, _res, next) => {
   try {
     const d = req.body, row = await col('settings').findOne({ id: 1 });
@@ -105,13 +134,39 @@ publicRouter.post('/parent-enquiries', formLimiter, rejectHoneypot, validate(par
   await col('enquiries').insertOne({ id, reference, status: 'new', data: JSON.stringify(d), parent_name: d.parentName, phone: d.phone, student_class: d.studentClass, city: d.city, created_at: timestamp, updated_at: timestamp });
   res.status(201).json({ reference, message: 'Your enquiry is with our team. We will check tutor availability for your selected city and area and confirm with you.' });
 }));
-publicRouter.post('/teacher-registrations', formLimiter, rejectHoneypot, validate(teacherRegistrationSchema), wrap(async (req, res) => {
+publicRouter.post('/teacher-registrations', formLimiter, requireCloudinary, teacherRegistrationUpload, parseTeacherApplication, rejectHoneypot, validate(teacherRegistrationSchema), validateTeacherRegistrationLocation, validateTeacherRegistrationFiles, wrap(async (req, res) => {
   const d = req.body, email = d.personal.email.toLowerCase(), phone = d.personal.phone;
   const dup = await col('teachers').findOne({ status: { $ne: 'rejected' }, $or: [{ email }, { phone }] });
   if (dup) return res.status(409).json({ error: { code: 'DUPLICATE', message: 'An application with this email or mobile number already exists.' } });
-  const reference = ref('TCH'), id = await nextId('teachers');
-  await col('teachers').insertOne({ id, reference, status: 'pending', data: JSON.stringify(d), full_name: d.personal.fullName, email, phone,
-    featured: 0, featured_order: 0, public_name: d.personal.fullName, public_location: null, public_photo: null,
-    public_subjects: JSON.stringify(d.teaching.subjects), public_levels: JSON.stringify(d.teaching.classes), created_at: now() });
-  res.status(201).json({ reference, message: 'Application received. It will be reviewed by our team.' });
+  const uploaded = [];
+  let persisted = false;
+  try {
+    const { profilePhoto, qualificationProof } = req.validatedTeacherFiles;
+    const profileAsset = await uploadPrivateTeacherAsset(profilePhoto.file.buffer, { folder: 'profile-photos', resourceType: 'image' });
+    if (!profileAsset?.public_id || !profileAsset?.format) throw new Error('Profile image storage returned incomplete metadata.');
+    uploaded.push({ publicId: profileAsset.public_id, resourceType: 'image' });
+    const proofAsset = await uploadPrivateTeacherAsset(qualificationProof.file.buffer, { folder: 'qualification-proofs', resourceType: 'raw', format: qualificationProof.format });
+    if (!proofAsset?.public_id || !proofAsset?.format) throw new Error('Qualification document storage returned incomplete metadata.');
+    uploaded.push({ publicId: proofAsset.public_id, resourceType: 'raw' });
+
+    const timestamp = now(), reference = ref('TCH'), id = await nextId('teachers');
+    const { termsAccepted, ...application } = d;
+    application.documents = {
+      profilePhoto: { publicId: profileAsset.public_id, resourceType: 'image', format: profilePhoto.format, mimeType: profilePhoto.mime, size: profilePhoto.file.size, width: profilePhoto.width, height: profilePhoto.height, originalName: profilePhoto.originalName },
+      qualificationProof: { publicId: proofAsset.public_id, resourceType: 'raw', format: qualificationProof.format, mimeType: qualificationProof.mime, size: qualificationProof.file.size, originalName: qualificationProof.originalName },
+    };
+    application.termsConsent = { accepted: termsAccepted, acceptedAt: timestamp, version: TEACHER_TERMS_VERSION };
+    await col('teachers').insertOne({ id, reference, status: 'pending', data: JSON.stringify(application), full_name: d.personal.fullName, email, phone,
+      featured: 0, featured_order: 0, public_name: d.personal.fullName, public_location: null, public_photo: null,
+      public_subjects: JSON.stringify(d.teaching.subjects), public_levels: JSON.stringify(d.teaching.classes), created_at: timestamp });
+    persisted = true;
+    res.status(201).json({ reference, message: 'Application received. It will be reviewed by our team.' });
+  } catch (error) {
+    if (!persisted) await Promise.allSettled(uploaded.map(async asset => {
+      const deleted = await deletePrivateTeacherAsset(asset.publicId, asset.resourceType).catch(() => false);
+      if (!deleted) console.warn('[teacher-registration] Private upload cleanup did not complete.');
+    }));
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(uploaded.length === 2 ? 500 : 502, uploaded.length === 2 ? 'Your application could not be saved. Please try again.' : 'The application documents could not be securely stored. Please try again.');
+  }
 }));

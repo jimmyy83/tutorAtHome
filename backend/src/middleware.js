@@ -63,7 +63,7 @@ export const errorHandler = (err, _req, res, _next) => {
   const status = err.status || (err.name === 'MulterError' ? (err.code === 'LIMIT_FILE_SIZE' ? 413 : 400) : 500);
   if (status >= 500) console.error('[error]', err.message);
   const safeMessage = err.name === 'MulterError'
-    ? (err.code === 'LIMIT_FILE_SIZE' ? 'Images must be 5 MB or smaller.' : 'The image upload could not be processed.')
+    ? (err.code === 'LIMIT_FILE_SIZE' ? 'Each uploaded file must be 5 MB or smaller.' : 'The uploaded files could not be processed.')
     : err instanceof HttpError ? err.message : status >= 500 ? 'Something went wrong on our side.' : err.message;
   res.status(status).json({ error: { code: err.code || err.details?.code || (status === 422 ? 'VALIDATION' : status === 401 ? 'UNAUTHORIZED' : 'ERROR'),
     message: safeMessage, fields: err.details } });

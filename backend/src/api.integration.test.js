@@ -5,10 +5,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { deflateSync } from 'node:zlib';
 import initSqlJs from 'sql.js';
+import { v2 as cloudinary } from 'cloudinary';
 
 const testUri = process.env.MONGODB_TEST_URI;
 const testDatabase = process.env.MONGODB_TEST_DATABASE || '';
+
+function png(width = 256, height = 256) {
+  const crc32 = buffer => { let crc = 0xffffffff; for (const byte of buffer) { crc ^= byte; for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); } return (crc ^ 0xffffffff) >>> 0; };
+  const chunk = (name, data) => { const type = Buffer.from(name), length = Buffer.alloc(4), checksum = Buffer.alloc(4); length.writeUInt32BE(data.length); checksum.writeUInt32BE(crc32(Buffer.concat([type, data]))); return Buffer.concat([length, type, data, checksum]); };
+  const header = Buffer.alloc(13); header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 6;
+  const scanline = Buffer.alloc(width * 4 + 1), rows = Buffer.alloc(scanline.length * height); for (let y = 0; y < height; y++) scanline.copy(rows, y * scanline.length);
+  return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
+}
+const validPdf = Buffer.from('%PDF-1.4\n1 0 obj <<>> endobj\ntrailer <<>>\n%%EOF');
 
 test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri }, async () => {
   assert.match(testDatabase, /^tutorathome_test_[a-z0-9_]+$/i, 'MONGODB_TEST_DATABASE must be a dedicated tutorathome_test_* database');
@@ -25,6 +36,21 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
   process.env.CLOUDINARY_API_SECRET = 'test-secret';
   const { connectDb, getDb, closeDb, col } = await import('./db.js');
   const { bootstrap, app } = await import('./server.js');
+  const originalUploadStream = cloudinary.uploader.upload_stream, originalDestroy = cloudinary.uploader.destroy, originalFetch = globalThis.fetch;
+  let uploadCalls = 0, failOnUpload = null;
+  const deletedPrivateAssets = [];
+  cloudinary.uploader.upload_stream = (options, callback) => ({ end(buffer) {
+    uploadCalls++;
+    if (uploadCalls === failOnUpload) { callback(new Error('test storage failure')); return; }
+    callback(null, { public_id: `${options.folder}/${options.public_id}`, secure_url: `https://res.cloudinary.com/tutorathome-test/image/upload/${options.folder}/${options.public_id}`, format: options.resource_type === 'raw' ? 'pdf' : 'png', bytes: buffer.length });
+  } });
+  cloudinary.uploader.destroy = async (publicId, options) => { deletedPrivateAssets.push({ publicId, ...options }); return { result: 'ok' }; };
+  globalThis.fetch = (input, options) => {
+    const url = String(input);
+    if (!url.includes('cloudinary.com')) return originalFetch(input, options);
+    const body = new URL(url).searchParams.get('public_id')?.includes('qualification-proofs') ? validPdf : png();
+    return Promise.resolve(new Response(Buffer.from(body), { status: 200, headers: { 'content-length': String(body.length) } }));
+  };
   let server, connected = false;
   try {
     await connectDb();
@@ -42,18 +68,37 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     const untrustedPreflight = await fetch(`${base}/api/admin/auth/login`, { method: 'OPTIONS', headers: { origin: 'https://untrusted.example', 'access-control-request-method': 'POST' } });
     assert.equal(untrustedPreflight.headers.get('access-control-allow-origin'), null);
     await col('teachers').insertMany([
-      { id: 9101, reference: 'TCH-TEST-FEATURED', status: 'approved', full_name: 'Featured Public Tutor', email: 'private@example.test', phone: '9000000001', featured: 1, featured_order: 1, public_name: 'Featured Public Tutor', public_location: 'Naini', location_state_id: 'up-test', location_district_id: 'prayagraj-test', location_locality_id: 'naini-test', public_photo: 'https://example.test/tutor.jpg', public_photo_id: 'tutorathome/teachers/test-photo', public_subjects: '["Mathematics"]', public_levels: '["10"]' },
-      { id: 9102, reference: 'TCH-TEST-APPROVED', status: 'approved', full_name: 'Approved Public Tutor', email: 'private2@example.test', phone: '9000000002', featured: 0, featured_order: 0, public_name: 'Approved Public Tutor', public_location: 'Lucknow', public_photo: '', public_subjects: '["Science"]', public_levels: '["9"]' },
-      { id: 9103, reference: 'TCH-TEST-PENDING', status: 'pending', full_name: 'Pending Private Tutor', email: 'private3@example.test', phone: '9000000003', featured: 1, featured_order: 0, public_name: 'Pending Private Tutor', public_location: 'Lucknow', public_photo: '', public_subjects: '["Science"]', public_levels: '["9"]' },
+      { id: 9101, reference: 'TCH-TEST-FEATURED', status: 'approved', full_name: 'Featured Public Tutor', email: 'private@example.test', phone: '9000000001', featured: 1, featured_order: 1, public_name: 'Featured Public Tutor', public_location: 'Naini', location_state_id: 'up-test', location_district_id: 'prayagraj-test', location_locality_id: 'naini-test', public_photo: 'https://example.test/tutor.jpg', public_photo_id: 'tutorathome/teachers/test-photo', public_subjects: '["Mathematics"]', public_levels: '["10"]', data: JSON.stringify({ academics: { graduation: { degree: 'M.Sc.' } } }) },
+      { id: 9102, reference: 'TCH-TEST-APPROVED', status: 'approved', full_name: 'Approved Public Tutor', email: 'private2@example.test', phone: '9000000002', featured: 0, featured_order: 0, public_name: 'Approved Public Tutor', public_location: 'Lucknow', public_photo: '', location_state_id: 'up-test', location_district_id: 'lucknow-test', location_locality_id: 'hazratganj-test', public_subjects: '["Science"]', public_levels: '["9"]', data: JSON.stringify({ personal: { address: 'Private test address' }, academics: { graduation: { degree: 'B.Tech.' }, postgraduation: { degree: 'M.Tech.' } }, documents: { profilePhoto: { publicId: 'tutorathome/private/teacher-applications/profile-photos/private-test-photo', format: 'png', mimeType: 'image/png', originalName: 'teacher.png' }, qualificationProof: { publicId: 'private-proof-id' } } }) },
+      { id: 9103, reference: 'TCH-TEST-PENDING', status: 'pending', full_name: 'Pending Private Tutor', email: 'private3@example.test', phone: '9000000003', featured: 1, featured_order: 0, public_name: 'Pending Private Tutor', public_location: 'Naini', public_photo: 'https://example.test/pending-photo.jpg', location_state_id: 'up-test', location_district_id: 'prayagraj-test', location_locality_id: 'naini-test', public_subjects: '["Science"]', public_levels: '["9"]', data: JSON.stringify({ academics: { graduation: { degree: 'B.A.' } } }) },
+      { id: 9104, reference: 'TCH-TEST-UNASSIGNED', status: 'approved', full_name: 'Unassigned Public Tutor', email: 'private4@example.test', phone: '9000000004', featured: 0, featured_order: 0, public_name: 'Unassigned Public Tutor', public_location: 'Unlisted', public_photo: '', public_subjects: '["Science"]', public_levels: '["9"]' },
+      { id: 9105, reference: 'TCH-TEST-SAME-LOCALITY-OTHER-DISTRICT', status: 'approved', full_name: 'Other District Tutor', email: 'private5@example.test', phone: '9000000005', featured: 0, featured_order: 0, public_name: 'Other District Tutor', public_location: 'Naini', public_photo: '', location_state_id: 'up-test', location_district_id: 'jhunsi-test', location_locality_id: 'naini-test', public_subjects: '["Mathematics"]', public_levels: '["10"]' },
+      { id: 9106, reference: 'TCH-TEST-NO-QUALIFICATION', status: 'approved', full_name: 'Missing Qualification Tutor', email: 'private6@example.test', phone: '9000000006', featured: 1, public_name: 'Missing Qualification Tutor', public_location: 'Naini', public_photo: 'https://example.test/no-qualification.jpg', location_state_id: 'up-test', location_district_id: 'prayagraj-test', location_locality_id: 'naini-test', public_subjects: '[]', public_levels: '[]', data: JSON.stringify({ academics: { graduation: { degree: '' } } }) },
+      { id: 9107, reference: 'TCH-TEST-NO-PHOTO', status: 'approved', full_name: 'Missing Photo Tutor', email: 'private7@example.test', phone: '9000000007', featured: 1, public_name: 'Missing Photo Tutor', public_location: 'Naini', location_state_id: 'up-test', location_district_id: 'prayagraj-test', location_locality_id: 'naini-test', public_subjects: '[]', public_levels: '[]', data: JSON.stringify({ academics: { graduation: { degree: 'B.A.' } } }) },
     ]);
     await col('media').insertOne({ id: 9199, public_id: 'tutorathome/teachers/test-photo', secure_url: 'https://res.cloudinary.com/tutorathome-test/image/upload/tutorathome/teachers/test-photo', folder: 'tutorathome/teachers' });
+    const unconfiguredLocationsResponse = await fetch(`${base}/api/public/locations`), unconfiguredLocationsBody = await unconfiguredLocationsResponse.json();
+    assert.deepEqual(unconfiguredLocationsBody.items, []);
+    const unconfiguredTeachersResponse = await fetch(`${base}/api/public/teachers?featured=false`), unconfiguredTeachersBody = await unconfiguredTeachersResponse.json();
+    assert.deepEqual(unconfiguredTeachersBody.items, []);
+    assert.equal(unconfiguredTeachersBody.total, 0);
     await col('settings').updateOne({ id: 1 }, { $set: { data: JSON.stringify({ ...JSON.parse((await col('settings').findOne({ id: 1 })).data), locationCatalog: { states: [
-      { id: 'up-test', name: 'Uttar Pradesh', active: true, districts: [{ id: 'prayagraj-test', name: 'Prayagraj', active: true, localities: [{ id: 'naini-test', name: 'Naini', active: true, publiclyServiceable: true }, { id: 'inactive-test', name: 'Inactive locality', active: true, publiclyServiceable: false }] }] },
+      { id: 'up-test', name: 'Uttar Pradesh', active: true, districts: [{ id: 'prayagraj-test', name: 'Prayagraj', active: true, localities: [{ id: 'naini-test', name: 'Naini', active: true, publiclyServiceable: true }, { id: 'inactive-test', name: 'Inactive locality', active: true, publiclyServiceable: false }] }, { id: 'jhunsi-test', name: 'Jhunsi', active: true, localities: [{ id: 'naini-test', name: 'Naini', active: true, publiclyServiceable: true }] }, { id: 'lucknow-test', name: 'Lucknow', active: true, localities: [{ id: 'hazratganj-test', name: 'Hazratganj', active: true, publiclyServiceable: true }] }] },
       { id: 'inactive-state-test', name: 'Inactive state', active: false, districts: [] },
     ] } }) } });
     const locationResponse = await fetch(`${base}/api/public/locations`), locationBody = await locationResponse.json();
     assert.equal(locationResponse.status, 200); assert.equal(locationBody.items.length, 1); assert.equal(locationBody.items[0].name, 'Uttar Pradesh');
     assert.deepEqual(locationBody.items[0].districts[0].localities.map(item => item.name), ['Naini']);
+    const registrationLocations = await fetch(`${base}/api/public/locations?audience=teacher-registration`), registrationLocationsBody = await registrationLocations.json();
+    assert.deepEqual(registrationLocationsBody.items[0].districts[0].localities.map(item => item.name), ['Naini', 'Inactive locality']);
+    const stateSearch = await fetch(`${base}/api/public/teachers?featured=false&stateId=up-test`), stateSearchBody = await stateSearch.json();
+    assert.deepEqual(new Set(stateSearchBody.items.map(item => item.id)), new Set([9101, 9102, 9106, 9107]));
+    const districtSearch = await fetch(`${base}/api/public/teachers?featured=false&stateId=up-test&districtId=prayagraj-test`), districtSearchBody = await districtSearch.json();
+    assert.deepEqual(new Set(districtSearchBody.items.map(item => item.id)), new Set([9101, 9106, 9107]));
+    const sameLocalityOtherDistrict = await fetch(`${base}/api/public/teachers?featured=false&stateId=up-test&districtId=jhunsi-test&localityId=naini-test`), sameLocalityOtherDistrictBody = await sameLocalityOtherDistrict.json();
+    assert.deepEqual(sameLocalityOtherDistrictBody.items.map(item => item.id), [9105]);
+    const subjectSearch = await fetch(`${base}/api/public/teachers?featured=false&subject=Science`), subjectSearchBody = await subjectSearch.json();
+    assert.deepEqual(subjectSearchBody.items.map(item => item.id), [9102]);
     const combinedLocationResponse = await fetch(`${base}/api/public/teachers?featured=false&stateId=up-test&districtId=prayagraj-test&localityId=naini-test&subject=Mathematics`), combinedLocationBody = await combinedLocationResponse.json();
     assert.deepEqual(combinedLocationBody.items.map(item => item.id), [9101]);
     const invalidLocationResponse = await fetch(`${base}/api/public/teachers?featured=false&stateId=up-test&districtId=wrong&localityId=naini-test`);
@@ -61,12 +106,13 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     const featuredResponse = await fetch(`${base}/api/public/teachers?limit=48`), featuredBody = await featuredResponse.json();
     assert.equal(featuredResponse.status, 200);
     assert.deepEqual(featuredBody.items.map(t => t.id), [9101]);
+    assert.equal(featuredBody.items[0].qualification, 'M.Sc.');
     assert.match(featuredBody.items[0].photoUrl, /res\.cloudinary\.com\/tutorathome-test\/image\/upload\/.*tutorathome\/teachers\/test-photo/);
     assert.match(featuredBody.items[0].photoUrl, /c_fill.*f_auto.*q_auto/);
-    assert.equal('phone' in featuredBody.items[0], false); assert.equal('email' in featuredBody.items[0], false);
+    assert.equal('phone' in featuredBody.items[0], false); assert.equal('email' in featuredBody.items[0], false); assert.equal('data' in featuredBody.items[0], false); assert.equal('personal' in featuredBody.items[0], false); assert.equal('documents' in featuredBody.items[0], false);
     const publicTeachersResponse = await fetch(`${base}/api/public/teachers?featured=false&limit=48`), publicTeachersBody = await publicTeachersResponse.json();
     assert.equal(publicTeachersResponse.status, 200);
-    assert.deepEqual(new Set(publicTeachersBody.items.map(t => t.id)), new Set([9101, 9102]));
+    assert.deepEqual(new Set(publicTeachersBody.items.map(t => t.id)), new Set([9101, 9102, 9106, 9107]));
     const searchPublicResponse = await fetch(`${base}/api/public/teachers?featured=false&search=Lucknow&limit=48`), searchPublicBody = await searchPublicResponse.json();
     assert.deepEqual(searchPublicBody.items.map(t => t.id), [9102]);
     const siteResponse = await fetch(`${base}/api/public/site`);
@@ -76,13 +122,16 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
 
     const enquiryResponse = await fetch(`${base}/api/public/parent-enquiries`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
       parentName: 'Integration Parent', phone: '9876543210', studentName: 'Student', studentClass: '10', board: 'CBSE',
-      subjects: ['Mathematics'], examPreparations: [], city: 'Prayagraj', mode: 'online', preferredDays: [], notes: 'Test record', website: '',
+      subjects: ['Mathematics'], examPreparations: [], city: 'Prayagraj', locality: 'Naini', mode: 'home', homeAddress: 'Private test address', pincode: '211008', latitude: 25.995, longitude: 80.0, preferredDays: [], notes: 'Test record', website: '',
     }) });
     assert.equal(enquiryResponse.status, 201);
     const enquiry = await enquiryResponse.json();
     assert.match(enquiry.reference, /^ENQ-/);
     assert.equal(await col('enquiries').countDocuments({ reference: enquiry.reference }), 1);
-    assert.equal('website' in JSON.parse((await col('enquiries').findOne({ reference: enquiry.reference })).data), false);
+    const savedEnquiry = await col('enquiries').findOne({ reference: enquiry.reference });
+    const savedEnquiryData = JSON.parse(savedEnquiry.data);
+    assert.equal('website' in savedEnquiryData, false);
+    assert.deepEqual([savedEnquiryData.latitude, savedEnquiryData.longitude], [25.995, 80]);
     const honeypotResponse = await fetch(`${base}/api/public/parent-enquiries`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
       parentName: 'Bot submission', phone: '9876543210', studentName: 'Student', studentClass: '10', board: 'CBSE',
       subjects: ['Mathematics'], examPreparations: [], city: 'Prayagraj', mode: 'online', preferredDays: [], website: 'https://spam.example',
@@ -93,19 +142,60 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     const teacherPayload = {
       website: '',
       personal: { fullName: 'Integration Teacher', gender: 'Other', dob: '1990-01-01', phone: '+919876543211', email: 'teacher-integration@example.test', address: 'Private test address', pincode: '211001', ownVehicle: false },
+      location: { stateId: 'up-test', districtId: 'prayagraj-test', localityId: 'naini-test', locality: 'Naini' },
       academics: { class10: { board: 'CBSE', year: 2006, score: '80%' }, class12: { board: 'CBSE', year: 2008, score: '80%' }, graduation: { degree: 'BA', university: 'Test University', year: 2011, score: '80%' }, certifications: [] },
       teaching: { classes: ['10'], subjects: ['Mathematics'], medium: 'English', experienceYears: 5, previousInstitutions: '', preferredAreas: '', homeTuition: true, commute: 'Vehicle' },
       availability: { days: ['Monday'], timeSlots: ['Evening'], teachingStyle: '', freeDemo: false, references: '' },
       fees: { minMonthly: 1000, maxMonthly: 2000, paymentModes: ['UPI'] }, termsAccepted: true,
     };
-    const teacherResponse = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(teacherPayload) });
+    const teacherForm = (application = teacherPayload, { photo = png(), proof = validPdf, includePhoto = true, includeProof = true } = {}) => {
+      const form = new FormData(); form.append('application', JSON.stringify(application));
+      if (includePhoto) form.append('profilePhoto', new Blob([photo], { type: 'image/png' }), 'professional-photo.png');
+      if (includeProof) form.append('qualificationProof', new Blob([proof], { type: 'application/pdf' }), 'degree-proof.pdf');
+      return form;
+    };
+    const invalidTeacherLocation = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'invalid-location@example.test', phone: '+919876543218' }, location: { ...teacherPayload.location, districtId: 'wrong-district' } }) });
+    assert.equal(invalidTeacherLocation.status, 422);
+    assert.equal(await col('teachers').countDocuments({ email: 'invalid-location@example.test' }), 0);
+    const teacherResponse = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm() });
     assert.equal(teacherResponse.status, 201);
     const teacher = await teacherResponse.json();
     assert.match(teacher.reference, /^TCH-/);
     const savedTeacher = await col('teachers').findOne({ reference: teacher.reference });
     assert.ok(savedTeacher);
-    assert.equal('website' in JSON.parse(savedTeacher.data), false);
-    const duplicateTeacherResponse = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(teacherPayload) });
+    const savedApplication = JSON.parse(savedTeacher.data);
+    assert.deepEqual(savedApplication.location, { stateId: 'up-test', state: 'Uttar Pradesh', districtId: 'prayagraj-test', district: 'Prayagraj', localityId: 'naini-test', locality: 'Naini' });
+    assert.equal('website' in savedApplication, false);
+    assert.equal(savedApplication.documents.profilePhoto.resourceType, 'image');
+    assert.equal(savedApplication.documents.profilePhoto.mimeType, 'image/png');
+    assert.equal(savedApplication.documents.qualificationProof.resourceType, 'raw');
+    assert.equal(savedApplication.documents.qualificationProof.mimeType, 'application/pdf');
+    assert.equal('secure_url' in savedApplication.documents.qualificationProof, false);
+    assert.deepEqual(savedApplication.termsConsent.accepted, true);
+    assert.ok(Number.isFinite(Date.parse(savedApplication.termsConsent.acceptedAt)));
+    assert.equal(savedApplication.termsConsent.version, 'teacher-terms-v1');
+
+    const teacherCountAfterSuccess = await col('teachers').countDocuments({});
+    const missingPhoto = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'missing-photo@example.test', phone: '+919876543212' } }, { includePhoto: false }) });
+    assert.equal(missingPhoto.status, 422);
+    const missingProof = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'missing-proof@example.test', phone: '+919876543213' } }, { includeProof: false }) });
+    assert.equal(missingProof.status, 422);
+    const invalidTerms = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, termsAccepted: false, personal: { ...teacherPayload.personal, email: 'terms-rejected@example.test', phone: '+919876543214' } }) });
+    assert.equal(invalidTerms.status, 422);
+    const invalidFile = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'invalid-file@example.test', phone: '+919876543215' } }, { photo: Buffer.from('not a real image') }) });
+    assert.equal(invalidFile.status, 415);
+    const oversized = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'oversized-file@example.test', phone: '+919876543216' } }, { proof: Buffer.alloc(5 * 1024 * 1024 + 1) }) });
+    assert.equal(oversized.status, 413);
+    assert.equal(await col('teachers').countDocuments({}), teacherCountAfterSuccess);
+
+    failOnUpload = uploadCalls + 2;
+    const storageFailure = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'storage-failure@example.test', phone: '+919876543217' } }) });
+    failOnUpload = null;
+    assert.equal(storageFailure.status, 502);
+    assert.equal(await col('teachers').countDocuments({}), teacherCountAfterSuccess);
+    assert.ok(deletedPrivateAssets.some(asset => asset.type === 'authenticated' && asset.resource_type === 'image'));
+
+    const duplicateTeacherResponse = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm() });
     assert.equal(duplicateTeacherResponse.status, 409);
     assert.equal(await col('teachers').countDocuments({ reference: teacher.reference }), 1);
 
@@ -119,6 +209,38 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     const loginResponse = await fetch(`${base}/api/admin/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: ` ${process.env.ADMIN_EMAIL.toUpperCase()} `, password: process.env.ADMIN_PASSWORD }) });
     assert.equal(loginResponse.status, 200);
     const { token } = await loginResponse.json(); assert.ok(token);
+    const unauthorizedFeaturedToggle = await fetch(`${base}/api/admin/teachers/9102/featured`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ featured: true }) });
+    assert.equal(unauthorizedFeaturedToggle.status, 401);
+    const markFeatured = await fetch(`${base}/api/admin/teachers/9102/featured`, { method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ featured: true }) });
+    assert.equal(markFeatured.status, 200);
+    const newlyFeaturedRecord = await col('teachers').findOne({ id: 9102 });
+    assert.equal(newlyFeaturedRecord.featured, 1);
+    assert.match(newlyFeaturedRecord.public_photo_id, /^tutorathome\/teachers\//);
+    const copiedProfilePhotoId = newlyFeaturedRecord.public_photo_id;
+    assert.ok(await col('media').findOne({ public_id: copiedProfilePhotoId }));
+    const featuredAfterMarkResponse = await fetch(`${base}/api/public/teachers?limit=48`), featuredAfterMark = await featuredAfterMarkResponse.json();
+    assert.deepEqual(new Set(featuredAfterMark.items.map(item => item.id)), new Set([9101, 9102]));
+    const markedTeacherPublic = featuredAfterMark.items.find(item => item.id === 9102);
+    assert.equal(markedTeacherPublic.qualification, 'M.Tech.');
+    assert.equal('email' in markedTeacherPublic, false);
+    const unmarkFeatured = await fetch(`${base}/api/admin/teachers/9102/featured`, { method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ featured: false }) });
+    assert.equal(unmarkFeatured.status, 200);
+    assert.equal((await col('teachers').findOne({ id: 9102 })).featured, 0);
+    assert.ok(await col('teachers').findOne({ id: 9102 }), 'unfeaturing must preserve the teacher record');
+    assert.equal((await col('teachers').findOne({ id: 9102 })).public_photo_id, copiedProfilePhotoId, 'unfeaturing must retain the public profile photo');
+    const pendingFeatured = await fetch(`${base}/api/admin/teachers/9103/featured`, { method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ featured: true }) });
+    assert.equal(pendingFeatured.status, 409);
+    const unauthorizedProof = await fetch(`${base}/api/admin/teachers/${savedTeacher.id}/documents/qualification-proof`);
+    assert.equal(unauthorizedProof.status, 401);
+    const profileDocumentResponse = await fetch(`${base}/api/admin/teachers/${savedTeacher.id}/documents/profile-photo`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(profileDocumentResponse.status, 200);
+    assert.equal(profileDocumentResponse.headers.get('content-type'), 'image/png');
+    assert.match(profileDocumentResponse.headers.get('content-disposition') || '', /attachment/);
+    assert.deepEqual(Buffer.from(await profileDocumentResponse.arrayBuffer()), png());
+    const proofDocumentResponse = await fetch(`${base}/api/admin/teachers/${savedTeacher.id}/documents/qualification-proof`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(proofDocumentResponse.status, 200);
+    assert.equal(proofDocumentResponse.headers.get('content-type'), 'application/pdf');
+    assert.deepEqual(Buffer.from(await proofDocumentResponse.arrayBuffer()), validPdf);
     const settingsResponse = await fetch(`${base}/api/admin/settings`, { headers: { authorization: `Bearer ${token}` } });
     const editableSettings = await settingsResponse.json();
     editableSettings.locationCatalog.states[0].districts[0].localities.push({ id: 'admin-added-test', name: 'Admin Added Test Area', active: true, publiclyServiceable: true });
@@ -137,6 +259,12 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     const enquiryList = await fetch(`${base}/api/admin/enquiries`, { headers: { authorization: `Bearer ${token}` } });
     assert.equal(enquiryList.status, 200);
     assert.equal((await enquiryList.json()).total, 1);
+    const privateEnquiryDetails = await fetch(`${base}/api/admin/enquiries/${savedEnquiry.id}`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(privateEnquiryDetails.status, 200);
+    const privateEnquiryBody = await privateEnquiryDetails.json();
+    assert.deepEqual([privateEnquiryBody.details.latitude, privateEnquiryBody.details.longitude], [25.995, 80]);
+    const privateEnquiryWithoutAuth = await fetch(`${base}/api/admin/enquiries/${savedEnquiry.id}`);
+    assert.equal(privateEnquiryWithoutAuth.status, 401);
     const invalidCity = await fetch(`${base}/api/public/parent-enquiries`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
       parentName: 'Invalid City', phone: '9876543210', studentName: 'Student', studentClass: '10', board: 'CBSE', subjects: ['Math'], city: 'Kanpur', mode: 'online',
     }) });
@@ -190,5 +318,8 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
     if (connected) { await getDb().dropDatabase(); await closeDb(); }
+    cloudinary.uploader.upload_stream = originalUploadStream;
+    cloudinary.uploader.destroy = originalDestroy;
+    globalThis.fetch = originalFetch;
   }
 });
