@@ -20,3 +20,66 @@ export function buildWhatsAppUrl(recipient, message = 'Hello TutorAtHome, I woul
   if (typeof message !== 'string' || !message.trim()) return '';
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
 }
+
+// Reserve the tab during the original user gesture when a form still needs to
+// finish asynchronous client validation before it can safely submit.
+export function reserveWhatsAppWindow() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const popup = window.open('about:blank', '_blank');
+    if (popup) popup.opener = null;
+    return popup;
+  } catch {
+    return null;
+  }
+}
+
+export function navigateWhatsAppWindow(popup, recipient, message) {
+  const href = buildWhatsAppUrl(recipient, message);
+  if (!popup || popup.closed || !href) return false;
+  try {
+    popup.location.href = href;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function openWhatsAppWindow(recipient, message) {
+  if (typeof window === 'undefined') return false;
+  const href = buildWhatsAppUrl(recipient, message);
+  if (!href) return false;
+  try {
+    const popup = window.open(href, '_blank');
+    if (popup) popup.opener = null;
+    return !!popup;
+  } catch {
+    return false;
+  }
+}
+
+export function startWhatsAppSubmission({ recipient, message, whatsAppWindow = null, save }) {
+  const opened = whatsAppWindow
+    ? navigateWhatsAppWindow(whatsAppWindow, recipient, message)
+    : openWhatsAppWindow(recipient, message);
+  let savePromise;
+  try {
+    savePromise = Promise.resolve(save());
+  } catch (error) {
+    savePromise = Promise.reject(error);
+  }
+  return { opened, savePromise };
+}
+
+export function createSubmissionGuard() {
+  let started = false;
+  return {
+    get started() { return started; },
+    tryStart() {
+      if (started) return false;
+      started = true;
+      return true;
+    },
+    reset() { started = false; },
+  };
+}
