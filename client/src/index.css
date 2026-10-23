@@ -107,6 +107,7 @@ button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}
 .location-map-hint{position:absolute;bottom:.75rem;left:.75rem;z-index:3;max-width:calc(100% - 2rem);border:1px solid rgba(226,232,240,.8);border-radius:999px;background:rgba(255,255,255,.94);padding:.45rem .7rem;color:#334155;font-size:.7rem;font-weight:600;box-shadow:0 2px 8px rgba(15,23,42,.12);pointer-events:none}
 .location-map-attribution{position:absolute;right:.4rem;bottom:.25rem;z-index:3;border-radius:.25rem;background:rgba(255,255,255,.9);padding:.15rem .3rem;color:#475569;font-size:.58rem;pointer-events:auto}.location-map-attribution a{text-decoration:underline}
 .dark .location-picker h3{color:#e2e8f0}.dark .location-map-zoom{border-color:#475569;background:#142238}.dark .location-map-zoom button{color:#e2e8f0}.dark .location-map-zoom button+button{border-color:#34445a}.dark .location-map-zoom button:hover{background:#1b2b40}.dark .location-map-hint{border-color:#34445a;background:rgba(15,27,43,.94);color:#d5e0ec}
+.footer-link{color:#adb9c9;transition:color .18s}.footer-link:hover{color:#f4bd62}
 .reveal-pending{opacity:0;transform:translate3d(0,34px,0) scale(.975);transition:opacity .62s cubic-bezier(.22,1,.36,1) var(--reveal-delay,0ms),transform .62s cubic-bezier(.22,1,.36,1) var(--reveal-delay,0ms);will-change:auto}
 .reveal-pending[data-reveal-direction="left"]{transform:translate3d(-22px,24px,0) scale(.98)}
 .reveal-pending[data-reveal-direction="right"]{transform:translate3d(22px,24px,0) scale(.98)}
@@ -224,6 +225,8 @@ button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}
 .exam-card{border-color:rgba(255,255,255,.15);background:linear-gradient(145deg,rgba(255,255,255,.085),rgba(120,13,28,.17));transition:transform .28s,border-color .28s,background .28s,box-shadow .28s}
 .exam-card:hover{transform:translateY(-4px);border-color:rgba(255,135,145,.5);background:linear-gradient(145deg,rgba(255,255,255,.12),rgba(120,13,28,.28));box-shadow:0 12px 28px rgba(0,0,0,.2)}
 .owner-surface{background:linear-gradient(135deg,#fff 0%,#f4f4f5 70%,#fff0f1 100%)}
+.site-footer{background:radial-gradient(ellipse at 85% 0%,rgba(120,13,28,.28),transparent 34%),linear-gradient(130deg,#080808 0%,#141012 70%,#27090e 100%)}
+.footer-link:hover{color:#ff8994}
 .location-map-pin{color:#d7192d}.location-map-pin svg{fill:#d7192d;stroke:#fff}
 .dark .site-header{border-color:rgba(255,255,255,.13);background:rgba(10,10,12,.84)}
 .dark .site-header.is-scrolled{border-color:rgba(237,54,72,.34);background:rgba(14,13,14,.9)}
@@ -231,6 +234,8 @@ button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}
 .dark .benefits-surface{background:linear-gradient(125deg,#101012 0%,#1a1416 55%,#2b1016 100%)}
 .dark .subject-surface{background:linear-gradient(145deg,#101012 0%,#191517 56%,#2a1116 100%)}
 .dark .owner-surface{background:linear-gradient(135deg,#101012 0%,#181517 70%,#2a1015 100%)}
+.dark .site-footer{background:radial-gradient(ellipse at 84% 0%,rgba(125,16,32,.22),transparent 36%),linear-gradient(130deg,#07080b 0%,#111116 70%,#210d13 100%)}
+.dark .footer-link{color:#c7c8cf}.dark .footer-link:hover{color:#ff8c99}
 .dark .section-heading h1,.dark .section-heading h2,.dark .form-intro h1{color:#fff7f7}
 .dark .section-heading .eyebrow,.dark .form-intro .eyebrow{color:#ff8994}
 .dark .process-card,.dark .process-card:nth-child(n),.dark .benefit-card,.dark .teacher-card{border-color:#49343a;background:linear-gradient(145deg,#181416 0%,#201619 72%,#341119 100%)}
@@ -359,7 +364,7 @@ html.dark body{background:var(--page-bg);color:var(--text-secondary)}
 .dark [class~="text-[#245b96]"],.dark [class~="text-[#173a5e]"],.dark [class~="text-[#315e8b]"]{color:#ff9ba7}
 .dark [class~="text-[#b3262d]"],.dark [class~="text-[#b51227]"],.dark [class~="text-[#a92332]"],.dark [class~="text-[#78101d]"],.dark [class~="text-[#8b1726]"]{color:#ff8795}
 .dark [class~="text-[#526b61]"]{color:#c7e5d8}
-.dark a:not([class*="bg-"]):not(.nav-primary){text-underline-offset:3px}
+.dark a:not([class*="bg-"]):not(.nav-primary):not(.footer-link){text-underline-offset:3px}
 .dark .text-red-900,.dark .text-red-800,.dark .text-red-700,.dark .text-red-600{color:#ff929e}
 .dark .bg-red-50{border-color:rgba(255,100,120,.24);background:rgba(137,18,37,.22);color:#ffc1c8}
 .dark .text-emerald-900,.dark .text-emerald-800,.dark .text-emerald-700,.dark .text-emerald-600{color:#86e3bd}

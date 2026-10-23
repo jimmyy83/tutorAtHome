@@ -1,10 +1,14 @@
 import {useEffect,useRef,useState} from 'react';
 import {Link,NavLink,Outlet,useLocation} from 'react-router-dom';
-import {ArrowUpRight,Menu,X} from 'lucide-react';
+import {ArrowUpRight,Menu,MessageCircle,X} from 'lucide-react';
+import {contact} from '../data/mock.js';
 import {siteInfo} from '../data/siteInfo.js';
+import {buildWhatsAppUrl} from '../utils/whatsapp.js';
 import {ThemeToggle} from '../context/ThemeContext.jsx';
 import AnnouncementPopup from './AnnouncementPopup.jsx';
 import usePublicSite from '../hooks/usePublicSite.js';
+import SocialLinks from './SocialLinks.jsx';
+import {shouldShowGlobalFooter} from '../utils/footerVisibility.js';
 
 const navItems=[['/teachers','Find a tutor'],['/#how-it-works','How it works'],['/#about','About'],['/contact','Contact']];
 function Navbar({brandName,logoUrl}){
@@ -27,4 +31,11 @@ function Navbar({brandName,logoUrl}){
   </div>
  </header></>;
 }
-export default function Layout(){const publicSite=usePublicSite();return <><Navbar brandName={publicSite.settings?.brandName} logoUrl={publicSite.settings?.logoUrl}/><main id="main-content"><Outlet context={publicSite}/></main><AnnouncementPopup/></>;}
+function Footer({settings}){const phone=settings?.phone||contact.phone,email=settings?.email||siteInfo.email,whatsappUrl=buildWhatsAppUrl(settings?.whatsapp),brand=settings?.brandName||siteInfo.brandName,offices=settings?.offices?.length?settings.offices:siteInfo.offices;return <footer id="contact" className="site-footer scroll-mt-24 bg-[#07172f] text-slate-300"><div className="mx-auto grid max-w-7xl gap-9 px-5 py-12 sm:px-8 md:grid-cols-[1.2fr_.8fr_.8fr] md:py-14">
+ <div><Link to="/" className="inline-flex items-center gap-2.5 text-white"><img src={settings?.logoUrl||siteInfo.logoUrl} alt="TutorAtHome logo" width="40" height="40" loading="lazy" className="h-9 w-9 rounded-xl bg-[#211f20] object-contain"/><span><span className="block font-semibold">{brand}</span><span className="block text-[9px] font-medium uppercase tracking-[.1em] text-slate-400">{siteInfo.tagline}</span></span></Link><p className="mt-4 max-w-sm text-sm leading-6 text-slate-400">{settings?.footerDescription||'Personalised tuition that helps learners grow with confidence, at home or online.'}</p></div>
+ <div className="text-sm"><p className="font-semibold text-white">Explore</p><ul className="mt-4 space-y-3"><li><Link className="footer-link" to="/teachers">Find a tutor</Link></li><li><Link className="footer-link" to="/teacher-registration">Become a teacher</Link></li><li><a className="footer-link" href="/#how-it-works">How it works</a></li></ul></div>
+ <div className="text-sm"><p className="font-semibold text-white">Get in touch</p><p className="mt-4 leading-6 text-slate-400">{phone.includes('placeholder')||!phone?'Call details will be shared soon.':phone}</p><a className="footer-link mt-2 block" href={`mailto:${email}`}>{email}</a>{whatsappUrl&&<a rel="noopener noreferrer" target="_blank" href={whatsappUrl} className="mt-4 inline-flex items-center gap-2 rounded-full bg-emerald-700/80 px-4 py-2.5 font-medium text-white transition hover:bg-emerald-600"><MessageCircle size={16}/> WhatsApp <ArrowUpRight size={14}/></a>}{whatsappUrl&&<p className="mt-2 text-xs text-slate-400">WhatsApp opens with a prefilled message. Review it and press Send in WhatsApp.</p>}</div>
+ <div className="text-sm md:col-span-3"><p className="font-semibold text-white">Our offices</p><div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{offices.map((office,index)=><address key={`${office.city}-${index}`} className="not-italic leading-6 text-slate-400"><span className="mb-1 block font-medium text-slate-200">{office.city}</span>{office.address}{office.phone&&<a className="footer-link mt-2 block w-fit" href={`tel:${office.phoneLink||office.phone}`}>{office.phone}</a>}</address>)}</div></div>
+ <div className="md:col-span-3"><SocialLinks links={settings?.socialLinks||[]} placement="footer" whatsappRecipient={settings?.whatsapp}/></div>
+ </div><div className="border-t border-white/10"><p className="mx-auto flex max-w-7xl flex-col gap-1 px-5 py-4 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-8"><span>© {new Date().getFullYear()} TutorAtHome. All rights reserved.</span><span>Designed &amp; developed by Aroh Makers</span></p></div></footer>;}
+export default function Layout(){const publicSite=usePublicSite();const {pathname}=useLocation();return <><Navbar brandName={publicSite.settings?.brandName} logoUrl={publicSite.settings?.logoUrl}/><main id="main-content"><Outlet context={publicSite}/></main><AnnouncementPopup/>{shouldShowGlobalFooter(pathname)&&<Footer settings={publicSite.settings}/>}</>;}
