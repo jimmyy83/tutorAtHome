@@ -34,6 +34,7 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
   process.env.CLOUDINARY_CLOUD_NAME = 'tutorathome-test';
   process.env.CLOUDINARY_API_KEY = 'test-key';
   process.env.CLOUDINARY_API_SECRET = 'test-secret';
+  process.env.FORM_RATE_LIMIT_MAX = '100';
   const { connectDb, getDb, closeDb, col } = await import('./db.js');
   const { bootstrap, app } = await import('./server.js');
   const originalUploadStream = cloudinary.uploader.upload_stream, originalDestroy = cloudinary.uploader.destroy, originalFetch = globalThis.fetch;
@@ -48,7 +49,8 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
   globalThis.fetch = (input, options) => {
     const url = String(input);
     if (!url.includes('cloudinary.com')) return originalFetch(input, options);
-    const body = new URL(url).searchParams.get('public_id')?.includes('qualification-proofs') ? validPdf : png();
+    const publicId = new URL(url).searchParams.get('public_id') || '';
+    const body = publicId.includes('qualification-proofs') || publicId.includes('identity-documents') ? validPdf : png();
     return Promise.resolve(new Response(Buffer.from(body), { status: 200, headers: { 'content-length': String(body.length) } }));
   };
   let server, connected = false;
@@ -119,6 +121,20 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     assert.equal(siteResponse.status, 200);
     assert.ok(siteResponse.headers.get('content-type').includes('application/json'));
     assert.equal('locationCatalog' in (await siteResponse.clone().json()).settings, false);
+    const publicTermsResponse = await fetch(`${base}/api/public/terms`), publicTerms = await publicTermsResponse.json();
+    assert.equal(publicTermsResponse.status, 200);
+    assert.equal(publicTerms.versionId, 'teacher-terms-v1');
+    assert.equal(publicTerms.versionNumber, 1);
+    assert.equal(publicTerms.maxUploadSizeMb, 5);
+    assert.deepEqual(publicTerms.content, [
+      "First month’s fee collected in advance; 50% retained as service charge.",
+      'From second month, tutor collects fees directly from parent.',
+      'Bypassing TutorAtHome assignments leads to blacklisting.',
+      'No payment for mid-month tutor withdrawal; proportionate payment if parent discontinues.',
+      'Assignments based on availability, feedback, performance; one at a time.',
+    ]);
+    assert.ok(Number.isFinite(Date.parse(publicTerms.publishedAt)));
+    assert.equal('publishedBy' in publicTerms, false);
 
     const enquiryResponse = await fetch(`${base}/api/public/parent-enquiries`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
       parentName: 'Integration Parent', phone: '9876543210', studentName: 'Student', studentClass: '10', board: 'CBSE',
@@ -146,12 +162,13 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
       academics: { class10: { board: 'CBSE', year: 2006, score: '80%' }, class12: { board: 'CBSE', year: 2008, score: '80%' }, graduation: { degree: 'BA', university: 'Test University', year: 2011, score: '80%' }, certifications: [] },
       teaching: { classes: ['10'], subjects: ['Mathematics'], medium: 'English', experienceYears: 5, previousInstitutions: '', preferredAreas: '', homeTuition: true, commute: 'Vehicle' },
       availability: { days: ['Monday'], timeSlots: ['Evening'], teachingStyle: '', freeDemo: false, references: '' },
-      fees: { minMonthly: 1000, maxMonthly: 2000, paymentModes: ['UPI'] }, termsAccepted: true,
+      fees: { minMonthly: 1000, maxMonthly: 2000, paymentModes: ['UPI'] }, termsVersionId: 'teacher-terms-v1', termsAccepted: true,
     };
-    const teacherForm = (application = teacherPayload, { photo = png(), proof = validPdf, includePhoto = true, includeProof = true } = {}) => {
+    const teacherForm = (application = teacherPayload, { photo = png(), proof = validPdf, aadhaar = validPdf, includePhoto = true, includeProof = true, includeAadhaar = true } = {}) => {
       const form = new FormData(); form.append('application', JSON.stringify(application));
       if (includePhoto) form.append('profilePhoto', new Blob([photo], { type: 'image/png' }), 'professional-photo.png');
       if (includeProof) form.append('qualificationProof', new Blob([proof], { type: 'application/pdf' }), 'degree-proof.pdf');
+      if (includeAadhaar) form.append('aadhaarDocument', new Blob([aadhaar], { type: 'application/pdf' }), 'private-aadhaar.pdf');
       return form;
     };
     const invalidTeacherLocation = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'invalid-location@example.test', phone: '+919876543218' }, location: { ...teacherPayload.location, districtId: 'wrong-district' } }) });
@@ -171,15 +188,27 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     assert.equal(savedApplication.documents.qualificationProof.resourceType, 'raw');
     assert.equal(savedApplication.documents.qualificationProof.mimeType, 'application/pdf');
     assert.equal('secure_url' in savedApplication.documents.qualificationProof, false);
+    assert.equal(savedApplication.documents.aadhaarDocument.resourceType, 'raw');
+    assert.equal(savedApplication.documents.aadhaarDocument.mimeType, 'application/pdf');
+    assert.equal('secure_url' in savedApplication.documents.aadhaarDocument, false);
+    assert.equal('originalName' in savedApplication.documents.aadhaarDocument, false);
     assert.deepEqual(savedApplication.termsConsent.accepted, true);
     assert.ok(Number.isFinite(Date.parse(savedApplication.termsConsent.acceptedAt)));
     assert.equal(savedApplication.termsConsent.version, 'teacher-terms-v1');
+    assert.equal(savedApplication.termsConsent.versionId, 'teacher-terms-v1');
+    assert.equal(savedApplication.termsConsent.versionNumber, 1);
 
     const teacherCountAfterSuccess = await col('teachers').countDocuments({});
     const missingPhoto = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'missing-photo@example.test', phone: '+919876543212' } }, { includePhoto: false }) });
     assert.equal(missingPhoto.status, 422);
     const missingProof = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'missing-proof@example.test', phone: '+919876543213' } }, { includeProof: false }) });
     assert.equal(missingProof.status, 422);
+    const missingAadhaar = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'missing-aadhaar@example.test', phone: '+919876543219' } }, { includeAadhaar: false }) });
+    assert.equal(missingAadhaar.status, 422);
+    const invalidAadhaar = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'invalid-aadhaar@example.test', phone: '+919876543220' } }, { aadhaar: Buffer.from('not a pdf') }) });
+    assert.equal(invalidAadhaar.status, 415);
+    const oversizedAadhaar = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'oversized-aadhaar@example.test', phone: '+919876543221' } }, { aadhaar: Buffer.alloc(5 * 1024 * 1024 + 1) }) });
+    assert.equal(oversizedAadhaar.status, 413);
     const invalidTerms = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, termsAccepted: false, personal: { ...teacherPayload.personal, email: 'terms-rejected@example.test', phone: '+919876543214' } }) });
     assert.equal(invalidTerms.status, 422);
     const invalidFile = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'invalid-file@example.test', phone: '+919876543215' } }, { photo: Buffer.from('not a real image') }) });
@@ -188,7 +217,7 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     assert.equal(oversized.status, 413);
     assert.equal(await col('teachers').countDocuments({}), teacherCountAfterSuccess);
 
-    failOnUpload = uploadCalls + 2;
+    failOnUpload = uploadCalls + 3;
     const storageFailure = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'storage-failure@example.test', phone: '+919876543217' } }) });
     failOnUpload = null;
     assert.equal(storageFailure.status, 502);
@@ -209,6 +238,91 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     const loginResponse = await fetch(`${base}/api/admin/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: ` ${process.env.ADMIN_EMAIL.toUpperCase()} `, password: process.env.ADMIN_PASSWORD }) });
     assert.equal(loginResponse.status, 200);
     const { token } = await loginResponse.json(); assert.ok(token);
+    const publicFieldConfigResponse = await fetch(base + '/api/public/page-form-settings');
+    assert.equal(publicFieldConfigResponse.status, 200);
+    const publicFieldConfig = await publicFieldConfigResponse.json();
+    assert.ok(publicFieldConfig.pages.findTutor.fields.parentName.visible);
+    assert.ok(publicFieldConfig.pages.becomeTeacher.fields.personal.email.visible);
+    assert.equal((await fetch(base + '/api/admin/page-form-settings')).status, 401);
+    const { signToken } = await import('./middleware.js');
+    const editorToken = signToken({ id: 987654, role: 'editor', name: 'Test editor', email: 'editor@example.test' });
+    const protectedSettingsHeaders = { 'content-type': 'application/json' };
+    assert.equal((await fetch(base + '/api/admin/leads/whatsapp', { method: 'PUT', headers: protectedSettingsHeaders, body: JSON.stringify({ whatsapp: '9876543210' }) })).status, 401);
+    assert.equal((await fetch(base + '/api/admin/auth/password', { method: 'PUT', headers: protectedSettingsHeaders, body: JSON.stringify({ currentPassword: 'old', newPassword: 'Strong-new-password-123', confirmPassword: 'Strong-new-password-123' }) })).status, 401);
+    assert.equal((await fetch(base + '/api/admin/leads/whatsapp', { method: 'PUT', headers: { ...protectedSettingsHeaders, authorization: 'Bearer ' + editorToken }, body: JSON.stringify({ whatsapp: '9876543210' }) })).status, 403);
+    assert.equal((await fetch(base + '/api/admin/auth/password', { method: 'PUT', headers: { ...protectedSettingsHeaders, authorization: 'Bearer ' + editorToken }, body: JSON.stringify({ currentPassword: 'old', newPassword: 'Strong-new-password-123', confirmPassword: 'Strong-new-password-123' }) })).status, 403);
+    const badLeadNumber = await fetch(base + '/api/admin/leads/whatsapp', { method: 'PUT', headers: { ...protectedSettingsHeaders, authorization: 'Bearer ' + token }, body: JSON.stringify({ whatsapp: 'invalid' }) });
+    assert.equal(badLeadNumber.status, 422);
+    const saveLeadNumber = await fetch(base + '/api/admin/leads/whatsapp', { method: 'PUT', headers: { ...protectedSettingsHeaders, authorization: 'Bearer ' + token }, body: JSON.stringify({ whatsapp: '+91 98765 43210' }) });
+    assert.equal(saveLeadNumber.status, 200);
+    assert.equal((await saveLeadNumber.json()).whatsapp, '919876543210');
+    const currentLeadSettings = await (await fetch(base + '/api/admin/settings', { headers: { authorization: 'Bearer ' + token } })).json();
+    assert.equal(currentLeadSettings.whatsapp, '919876543210');
+    const publicSiteAfterLeadNumberUpdate = await (await fetch(base + '/api/public/site')).json();
+    assert.equal(publicSiteAfterLeadNumberUpdate.settings.whatsapp, '919876543210');
+    const badCurrentPassword = await fetch(base + '/api/admin/auth/password', { method: 'PUT', headers: { ...protectedSettingsHeaders, authorization: 'Bearer ' + token }, body: JSON.stringify({ currentPassword: 'wrong-password', newPassword: 'Strong-new-password-123', confirmPassword: 'Strong-new-password-123' }) });
+    assert.equal(badCurrentPassword.status, 401);
+    assert.equal((await fetch(base + '/api/admin/page-form-settings', { headers: { authorization: 'Bearer ' + editorToken } })).status, 403);
+    const formSettingsHeaders = { authorization: 'Bearer ' + token, 'content-type': 'application/json' };
+    const formSettingsResponse = await fetch(base + '/api/admin/page-form-settings', { headers: formSettingsHeaders });
+    assert.equal(formSettingsResponse.status, 200);
+    const formSettings = await formSettingsResponse.json();
+    const editedFieldSettings = structuredClone(formSettings.draft);
+    editedFieldSettings.findTutor.fields.notes = { visible: false, required: false };
+    const saveFieldDraft = await fetch(base + '/api/admin/page-form-settings/draft', { method: 'PUT', headers: formSettingsHeaders, body: JSON.stringify({ expectedRevision: formSettings.revision, expectedDraftRevision: formSettings.draftRevision, pages: editedFieldSettings }) });
+    assert.equal(saveFieldDraft.status, 200);
+    const savedFieldDraft = await saveFieldDraft.json();
+    const staleFieldDraft = await fetch(base + '/api/admin/page-form-settings/draft', { method: 'PUT', headers: formSettingsHeaders, body: JSON.stringify({ expectedRevision: savedFieldDraft.revision, expectedDraftRevision: formSettings.draftRevision, pages: editedFieldSettings }) });
+    assert.equal(staleFieldDraft.status, 409);
+    const publishFieldSettings = await fetch(base + '/api/admin/page-form-settings/publish', { method: 'POST', headers: formSettingsHeaders, body: JSON.stringify({ expectedRevision: savedFieldDraft.revision, expectedDraftRevision: savedFieldDraft.draftRevision }) });
+    assert.equal(publishFieldSettings.status, 200);
+    const publishedFieldSettings = await publishFieldSettings.json();
+    assert.equal(publishedFieldSettings.published.findTutor.fields.notes.visible, false);
+    assert.equal(publishedFieldSettings.published.becomeTeacher.fields.personal.email.visible, true);
+    assert.equal(await col('page_form_settings_history').countDocuments({ revision: publishedFieldSettings.revision }), 1);
+    const forbiddenFieldSettings = structuredClone(publishedFieldSettings.draft);
+    forbiddenFieldSettings.findTutor.fields.phone.visible = false;
+    const protectedFieldDraft = await fetch(base + '/api/admin/page-form-settings/draft', { method: 'PUT', headers: formSettingsHeaders, body: JSON.stringify({ expectedRevision: publishedFieldSettings.revision, expectedDraftRevision: publishedFieldSettings.draftRevision, pages: forbiddenFieldSettings }) });
+    assert.equal(protectedFieldDraft.status, 422);
+    const noTermsAuth = await fetch(`${base}/api/admin/terms`);
+    assert.equal(noTermsAuth.status, 401);
+    const noTermsDraftAuth = await fetch(`${base}/api/admin/terms/draft`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ content: ['Unauthorized'], expectedRevision: 1, expectedCurrentVersionId: 'teacher-terms-v1' }) });
+    assert.equal(noTermsDraftAuth.status, 401);
+    const viewerToken = signToken({ id: 9999, role: 'viewer', name: 'Viewer', email: 'viewer@example.test' });
+    const viewerTerms = await fetch(`${base}/api/admin/terms`, { headers: { authorization: `Bearer ${viewerToken}` } });
+    assert.equal(viewerTerms.status, 403);
+    const viewerTeacherDetails = await fetch(`${base}/api/admin/teachers/${savedTeacher.id}`, { headers: { authorization: `Bearer ${viewerToken}` } });
+    assert.equal(viewerTeacherDetails.status, 403);
+    const viewerAadhaar = await fetch(`${base}/api/admin/teachers/${savedTeacher.id}/documents/aadhaar-document`, { headers: { authorization: `Bearer ${viewerToken}` } });
+    assert.equal(viewerAadhaar.status, 403);
+    const adminTermsResponse = await fetch(`${base}/api/admin/terms`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(adminTermsResponse.status, 200);
+    const adminTerms = await adminTermsResponse.json();
+    assert.equal(adminTerms.current.id, 'teacher-terms-v1');
+    const oldTerms = [...adminTerms.current.content];
+    const draftTermsResponse = await fetch(`${base}/api/admin/terms/draft`, { method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ content: [...oldTerms, 'Integration-test draft condition.'], changeSummary: 'Integration test', expectedRevision: adminTerms.revision, expectedCurrentVersionId: adminTerms.current.id }) });
+    assert.equal(draftTermsResponse.status, 200);
+    const draftTerms = await draftTermsResponse.json();
+    const publicTermsBeforePublish = await (await fetch(`${base}/api/public/terms`)).json();
+    assert.equal(publicTermsBeforePublish.versionId, 'teacher-terms-v1');
+    const publishTermsResponse = await fetch(`${base}/api/admin/terms/publish`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: draftTerms.revision, expectedCurrentVersionId: 'teacher-terms-v1', expectedDraftVersionId: draftTerms.id }) });
+    assert.equal(publishTermsResponse.status, 200);
+    const publishedTerms = await publishTermsResponse.json();
+    assert.equal(publishedTerms.versionNumber, 2);
+    assert.ok(Number.isFinite(Date.parse(publishedTerms.publishedAt)));
+    assert.equal(publishedTerms.publishedBy.email, process.env.ADMIN_EMAIL);
+    const currentTermsAfterPublish = await (await fetch(`${base}/api/public/terms`)).json();
+    assert.equal(currentTermsAfterPublish.versionId, publishedTerms.versionId);
+    assert.equal(currentTermsAfterPublish.content.at(-1), 'Integration-test draft condition.');
+    assert.equal('publishedBy' in currentTermsAfterPublish, false);
+    const oldVersionResponse = await fetch(`${base}/api/admin/terms/versions/teacher-terms-v1`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(oldVersionResponse.status, 200);
+    assert.deepEqual((await oldVersionResponse.json()).content, oldTerms);
+    const staleRegistrationResponse = await fetch(`${base}/api/public/teacher-registrations`, { method: 'POST', body: teacherForm({ ...teacherPayload, personal: { ...teacherPayload.personal, email: 'stale-terms@example.test', phone: '+919876543222' } }) });
+    assert.equal(staleRegistrationResponse.status, 409);
+    assert.equal(await col('teachers').countDocuments({ email: 'stale-terms@example.test' }), 0);
+    const staleDraftResponse = await fetch(`${base}/api/admin/terms/draft`, { method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ content: oldTerms, expectedRevision: adminTerms.revision, expectedCurrentVersionId: 'teacher-terms-v1' }) });
+    assert.equal(staleDraftResponse.status, 409);
     const unauthorizedFeaturedToggle = await fetch(`${base}/api/admin/teachers/9102/featured`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ featured: true }) });
     assert.equal(unauthorizedFeaturedToggle.status, 401);
     const markFeatured = await fetch(`${base}/api/admin/teachers/9102/featured`, { method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ featured: true }) });
@@ -232,6 +346,8 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     assert.equal(pendingFeatured.status, 409);
     const unauthorizedProof = await fetch(`${base}/api/admin/teachers/${savedTeacher.id}/documents/qualification-proof`);
     assert.equal(unauthorizedProof.status, 401);
+    const unauthorizedAadhaar = await fetch(`${base}/api/admin/teachers/${savedTeacher.id}/documents/aadhaar-document`);
+    assert.equal(unauthorizedAadhaar.status, 401);
     const profileDocumentResponse = await fetch(`${base}/api/admin/teachers/${savedTeacher.id}/documents/profile-photo`, { headers: { authorization: `Bearer ${token}` } });
     assert.equal(profileDocumentResponse.status, 200);
     assert.equal(profileDocumentResponse.headers.get('content-type'), 'image/png');
@@ -241,6 +357,13 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     assert.equal(proofDocumentResponse.status, 200);
     assert.equal(proofDocumentResponse.headers.get('content-type'), 'application/pdf');
     assert.deepEqual(Buffer.from(await proofDocumentResponse.arrayBuffer()), validPdf);
+    const aadhaarDocumentResponse = await fetch(`${base}/api/admin/teachers/${savedTeacher.id}/documents/aadhaar-document`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(aadhaarDocumentResponse.status, 200);
+    assert.equal(aadhaarDocumentResponse.headers.get('content-type'), 'application/pdf');
+    assert.equal(aadhaarDocumentResponse.headers.get('cache-control'), 'private, no-store');
+    assert.match(aadhaarDocumentResponse.headers.get('content-disposition') || '', /identity-verification\.pdf/);
+    assert.doesNotMatch(aadhaarDocumentResponse.headers.get('content-disposition') || '', /private-aadhaar/);
+    assert.deepEqual(Buffer.from(await aadhaarDocumentResponse.arrayBuffer()), validPdf);
     const settingsResponse = await fetch(`${base}/api/admin/settings`, { headers: { authorization: `Bearer ${token}` } });
     const editableSettings = await settingsResponse.json();
     editableSettings.locationCatalog.states[0].districts[0].localities.push({ id: 'admin-added-test', name: 'Admin Added Test Area', active: true, publiclyServiceable: true });
@@ -323,3 +446,4 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     globalThis.fetch = originalFetch;
   }
 });
+

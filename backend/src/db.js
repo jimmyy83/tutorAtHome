@@ -31,6 +31,12 @@ export function getDb() {
   return database;
 }
 export async function closeDb() { await client?.close(); client = undefined; database = undefined; }
+export async function withDbTransaction(work) {
+  if (!client || !database) throw new Error('MongoDB is not connected.');
+  const session = client.startSession();
+  try { return await session.withTransaction(() => work(session)); }
+  finally { await session.endSession(); }
+}
 export const col = (name) => getDb().collection(name);
 export const toId = (value) => {
   const n = Number(value);
@@ -44,7 +50,9 @@ export async function nextId(name) {
 }
 async function ensureIndexes() {
   const indexes = [
-    ...['admins', 'settings', 'content', 'revisions', 'banners', 'media', 'teachers', 'enquiries', 'enquiry_notes'].map(name => [name, [{ key: { id: 1 }, options: { unique: true } }]]),
+    ...['admins', 'settings', 'content', 'revisions', 'banners', 'media', 'teachers', 'enquiries', 'enquiry_notes', 'teacher_terms_state', 'page_form_settings'].map(name => [name, [{ key: { id: 1 }, options: { unique: true } }]]),
+    ['page_form_settings_history', [{ key: { revision: 1 }, options: { unique: true } }]],
+    ['teacher_terms_versions', [{ key: { id: 1 }, options: { unique: true } }, { key: { version_number: 1 }, options: { unique: true } }, { key: { status: 1, published_at: -1 } }]],
     ['admins', [{ key: { email: 1 }, options: { unique: true } }]],
     ['teachers', [{ key: { reference: 1 }, options: { unique: true } }, { key: { email: 1 } }, { key: { phone: 1 } }, { key: { status: 1, featured: 1, featured_order: 1 } }, { key: { status: 1, location_state_id: 1, location_district_id: 1, location_locality_id: 1 } }]],
     ['enquiries', [{ key: { reference: 1 }, options: { unique: true } }, { key: { status: 1, created_at: -1 } }]],
@@ -53,3 +61,4 @@ async function ensureIndexes() {
   ];
   for (const [name, defs] of indexes) for (const { key, options = {} } of defs) await col(name).createIndex(key, options);
 }
+

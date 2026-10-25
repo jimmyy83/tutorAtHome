@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeWhatsAppNumber } from './whatsappSettings.js';
 
 const phone = z.string().trim().regex(/^\+?[0-9]{10,14}$/, 'Enter a valid mobile number (10–14 digits, optional +country code).');
 const str = (max = 200) => z.string().trim().max(max);
@@ -9,44 +10,22 @@ const edu = z.object({ board: req('Board'), year, score: req('Percentage/grade',
 const degree = z.object({ degree: req('Degree'), university: req('University'), year, score: req('CGPA/percentage', 20) });
 
 export const parentEnquirySchema = z.object({
-  parentName: req('Parent name', 120),
-  phone,
-  studentName: req('Student name', 120),
-  studentClass: req('Class', 40),
-  board: req('Board', 60),
-  streamId: str(60).optional(),
-  examPreparations: z.array(str(60)).max(10).default([]),
-  subjects: z.array(str(80)).min(1, 'Select at least one subject.').max(15),
+  parentName: req('Parent name', 120), phone, studentName: req('Student name', 120),
+  studentClass: req('Class', 40), board: req('Board', 60), streamId: str(60).optional(),
+  examPreparations: z.array(str(60)).max(10).default([]), subjects: z.array(str(80)).min(1, 'Select at least one subject.').max(15),
   city: z.enum(['Prayagraj', 'Lucknow'], { error: 'Choose Prayagraj or Lucknow.' }),
-  locality: str(120).optional().default(''),
-  homeAddress: str(300).optional().default(''),
-  colony: str(120).optional().default(''),
-  landmark: str(120).optional().default(''),
+  locality: str(120).optional(), homeAddress: str(300).optional(), colony: str(120).optional(), landmark: str(120).optional(),
   pincode: z.string().regex(/^[0-9]{6}$/, 'PIN code must be 6 digits.').optional(),
-  latitude: coordinate(-90, 90),
-  longitude: coordinate(-180, 180),
-  mode: z.enum(['home', 'online']),
-  preferredDays: z.array(str(20)).max(7).default([]),
-  preferredTiming: str(120).optional().default(''),
-  budget: z.coerce.number().int().min(0).max(1000000).optional(),
-  notes: str(1500).optional().default(''),
-}).strict().partial({ budget: true }).superRefine((enquiry, ctx) => {
-  const hasLatitude = enquiry.latitude !== undefined;
-  const hasLongitude = enquiry.longitude !== undefined;
-  if (hasLatitude !== hasLongitude) {
-    const missingField = hasLatitude ? 'longitude' : 'latitude';
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [missingField], message: 'Choose both map coordinates or leave the map pin unset.' });
-  }
+  latitude: coordinate(-90, 90), longitude: coordinate(-180, 180), mode: z.enum(['home', 'online']),
+  preferredDays: z.array(str(20)).max(7).default([]), preferredTiming: str(120).optional(),
+  budget: z.coerce.number().int().min(0).max(1000000).optional(), notes: str(1500).optional(),
+}).strict().superRefine((enquiry, ctx) => {
+  const hasLatitude = enquiry.latitude !== undefined, hasLongitude = enquiry.longitude !== undefined;
+  if (hasLatitude !== hasLongitude) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [hasLatitude ? 'longitude' : 'latitude'], message: 'Choose both map coordinates or leave the map pin unset.' });
   const senior = ['11', '12'].includes(enquiry.studentClass);
   if (senior && !enquiry.streamId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['streamId'], message: 'Choose a stream for Class 11 or 12.' });
   if (!senior && enquiry.streamId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['streamId'], message: 'Streams are available for Class 11 and 12.' });
-  if (enquiry.mode === 'home') {
-    if (!enquiry.locality.trim()) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['locality'], message: 'Locality is required for home tuition.' });
-    if (!enquiry.homeAddress.trim()) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['homeAddress'], message: 'Home address is required for home tuition.' });
-    if (!enquiry.pincode) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['pincode'], message: 'PIN code is required for home tuition.' });
-  }
 });
-
 export const teacherRegistrationSchema = z.object({
   personal: z.object({
     fullName: req('Full name', 120),
@@ -56,12 +35,12 @@ export const teacherRegistrationSchema = z.object({
     email: z.string().trim().email('Enter a valid email address.').max(160),
     address: req('Address', 300), landmark: str(120).optional().default(''),
     pincode: z.string().regex(/^[1-9][0-9]{5}$/, 'Enter a valid 6-digit Indian PIN code.'),
-    ownVehicle: z.boolean(),
+    ownVehicle: z.boolean().optional(),
   }),
   academics: z.object({
     class10: edu, class12: edu, graduation: degree,
     postgraduation: degree.partial().optional(),
-    certifications: z.array(str(160)).max(20).default([]),
+    certifications: z.array(str(160)).max(20).optional(),
   }),
   teaching: z.object({
     classes: z.array(str(40)).min(1, 'Select at least one class.'),
@@ -70,14 +49,14 @@ export const teacherRegistrationSchema = z.object({
     experienceYears: z.coerce.number().min(0).max(60),
     previousInstitutions: str(500).optional().default(''),
     preferredAreas: str(300).optional().default(''),
-    homeTuition: z.boolean(),
+    homeTuition: z.boolean().optional(),
     commute: z.enum(['Vehicle', 'Public Transport', 'Walk']),
   }),
   availability: z.object({
     days: z.array(str(20)).min(1, 'Select at least one day.'),
     timeSlots: z.array(str(40)).min(1, 'Select at least one time slot.'),
     teachingStyle: str(1000).optional().default(''),
-    freeDemo: z.boolean(),
+    freeDemo: z.boolean().optional(),
     references: str(800).optional().default(''),
   }),
   fees: z.object({
@@ -86,7 +65,20 @@ export const teacherRegistrationSchema = z.object({
     paymentModes: z.array(z.enum(['Cash', 'UPI', 'Bank Transfer'])).min(1, 'Select at least one payment mode.'),
   }).refine((f) => f.maxMonthly >= f.minMonthly, { message: 'Maximum fee must be at least the minimum fee.', path: ['maxMonthly'] }),
   location: z.object({ stateId: req('State'), districtId: req('District'), localityId: req('Village / Colony / Locality'), locality: req('Village / Colony / Locality', 120) }).strict(),
-  termsAccepted: z.literal(true, { error: 'You must agree to the Terms & Conditions before submitting.' }),
+  termsVersionId: req('Terms version', 100),
+  termsAccepted: z.literal(true, { error: 'You must agree to the current Terms & Conditions before submitting.' }),
+}).strict();
+
+export const teacherTermsDraftSchema = z.object({
+  content: z.array(z.string().trim().min(1).max(3000)).min(1).max(50),
+  changeSummary: str(300).optional().default(''),
+  expectedRevision: z.number().int().nonnegative(),
+  expectedCurrentVersionId: req('Current terms version', 100),
+}).strict();
+export const teacherTermsPublishSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  expectedCurrentVersionId: req('Current terms version', 100),
+  expectedDraftVersionId: req('Draft terms version', 120),
 }).strict();
 
 export const loginSchema = z.object({ email: z.string().trim().email(), password: z.string().min(1) });
@@ -136,7 +128,9 @@ const locationCatalogSchema = z.object({
   unique(catalog.states, ['states']);
   catalog.states.forEach((state, si) => { unique(state.districts, ['states', si, 'districts']); state.districts.forEach((district, di) => unique(district.localities, ['states', si, 'districts', di, 'localities'])); });
 });
-export const settingsSchema = z.object({ socialLinks: socialLinksSchema.optional(), educationCatalog: educationCatalogSchema.optional(), locationCatalog: locationCatalogSchema.optional() }).passthrough();
+export const settingsSchema = z.object({ socialLinks: socialLinksSchema.optional(), educationCatalog: educationCatalogSchema.optional(), locationCatalog: locationCatalogSchema.optional(), whatsapp: z.string().trim().min(1).max(40).transform(normalizeWhatsAppNumber).refine(Boolean, 'Enter a valid international WhatsApp number including country code.').optional() }).passthrough();
+export const pageFormDraftSchema = z.object({ expectedRevision: z.number().int().nonnegative(), expectedDraftRevision: z.number().int().nonnegative(), pages: z.record(z.string(), z.any()) }).strict();
+export const pageFormPublishSchema = z.object({ expectedRevision: z.number().int().nonnegative(), expectedDraftRevision: z.number().int().nonnegative() }).strict();
 export const teacherStatusSchema = z.object({ status: z.enum(['pending', 'approved', 'rejected']) });
 export const teacherFeaturedSchema = z.object({
   featured: z.boolean().optional(), featuredOrder: z.coerce.number().int().min(0).optional(),
@@ -146,3 +140,9 @@ export const teacherFeaturedSchema = z.object({
 });
 export const enquiryUpdateSchema = z.object({ status: z.enum(['new', 'contacted', 'in_progress', 'matched', 'closed']) });
 export const noteSchema = z.object({ note: req('Note', 1500) });
+
+
+
+
+export const whatsappSettingsSchema = z.object({ whatsapp: z.string().trim().min(1).max(40).transform(normalizeWhatsAppNumber).refine(Boolean, 'Enter a valid international WhatsApp number including country code.') }).strict();
+export const passwordChangeSchema = z.object({ currentPassword: z.string().min(1).max(128), newPassword: z.string().min(12).max(128), confirmPassword: z.string().min(12).max(128) }).strict().refine(value => value.newPassword === value.confirmPassword, { message: 'New passwords do not match.', path: ['confirmPassword'] });

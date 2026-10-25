@@ -1,13 +1,20 @@
 import { Router } from 'express';
-import { col, json, now, nextId, escapeRegex } from '../db.js';
+import { col, json, now, nextId, escapeRegex, withDbTransaction } from '../db.js';
 import { wrap, validate, formLimiter, rejectHoneypot, HttpError } from '../middleware.js';
 import { parentEnquirySchema, teacherRegistrationSchema } from '../schemas.js';
 import crypto from 'node:crypto';
 import { deletePrivateTeacherAsset, optimizedCloudImage, requireCloudinary, uploadPrivateTeacherAsset } from '../cloudinary.js';
-import { parseTeacherApplication, teacherRegistrationUpload, TEACHER_TERMS_VERSION, validateTeacherRegistrationFiles } from '../teacherRegistrationFiles.js';
+import { parseTeacherApplication, teacherRegistrationUpload, validateTeacherRegistrationFiles } from '../teacherRegistrationFiles.js';
+import { currentTeacherTerms, validateCurrentTeacherTerms } from '../teacherTerms.js';
 import { publicQualification } from '../teacherProfile.js';
+import { configuredSubmission, getPublishedPageFormSettings } from '../pageFormSettings.js';
 
 export const publicRouter = Router();
+publicRouter.get('/page-form-settings', wrap(async (_req,res) => res.json(await getPublishedPageFormSettings())));publicRouter.get('/terms', wrap(async (_req, res) => {
+  const terms = await currentTeacherTerms();
+  if (!terms) throw new HttpError(503, 'Published terms are temporarily unavailable.');
+  res.json(terms);
+}));
 const ref = (p) => `${p}-${new Date().getFullYear()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 const allowedSocialIcons = new Set(['instagram', 'facebook', 'youtube', 'linkedin', 'x', 'whatsapp', 'globe', 'link']);
 const publicSocialLink = (link) => {
@@ -118,7 +125,7 @@ const validateEducationSelection = async (req, _res, next) => {
     const level = active(catalog.educationLevels).find(item => String(item.value) === d.studentClass), senior = ['11', '12'].includes(d.studentClass);
     const stream = active(catalog.streams).find(item => item.id === d.streamId), fields = {};
     if (catalog.educationLevels && !level) fields.studentClass = 'Choose an available education level.';
-    if (senior && !stream) fields.streamId = 'Choose an available Class 11–12 stream.';
+    if (senior && !stream) fields.streamId = 'Choose an available Class 11-12 stream.';
     if (!senior && d.streamId) fields.streamId = 'Streams are available only for Class 11 and 12.';
     const overrides = catalog.subjectsByBoardClass?.[d.board]?.[d.studentClass]?.[d.streamId || 'general'];
     const allowedSubjects = overrides || (senior ? stream?.subjects : null);
@@ -129,36 +136,46 @@ const validateEducationSelection = async (req, _res, next) => {
     next();
   } catch (error) { next(error); }
 };
-publicRouter.post('/parent-enquiries', formLimiter, rejectHoneypot, validate(parentEnquirySchema), validateEducationSelection, wrap(async (req, res) => {
+publicRouter.post('/parent-enquiries', formLimiter, rejectHoneypot, wrap(async (req,_res,next) => { req.body = await configuredSubmission('findTutor', req.body); next(); }), validate(parentEnquirySchema), wrap(async (req,_res,next) => { req.body = await configuredSubmission('findTutor', req.body); next(); }), validateEducationSelection, wrap(async (req, res) => {
   const d = req.body, reference = ref('ENQ'), timestamp = now(), id = await nextId('enquiries');
   await col('enquiries').insertOne({ id, reference, status: 'new', data: JSON.stringify(d), parent_name: d.parentName, phone: d.phone, student_class: d.studentClass, city: d.city, created_at: timestamp, updated_at: timestamp });
   res.status(201).json({ reference, message: 'Your enquiry is with our team. We will check tutor availability for your selected city and area and confirm with you.' });
 }));
-publicRouter.post('/teacher-registrations', formLimiter, requireCloudinary, teacherRegistrationUpload, parseTeacherApplication, rejectHoneypot, validate(teacherRegistrationSchema), validateTeacherRegistrationLocation, validateTeacherRegistrationFiles, wrap(async (req, res) => {
+publicRouter.post('/teacher-registrations', formLimiter, requireCloudinary, teacherRegistrationUpload, parseTeacherApplication, rejectHoneypot, wrap(async (req,_res,next) => { req.body = await configuredSubmission('becomeTeacher', req.body); next(); }), validate(teacherRegistrationSchema), wrap(async (req,_res,next) => { req.body = await configuredSubmission('becomeTeacher', req.body); next(); }), validateCurrentTeacherTerms, validateTeacherRegistrationLocation, validateTeacherRegistrationFiles, wrap(async (req, res) => {
   const d = req.body, email = d.personal.email.toLowerCase(), phone = d.personal.phone;
   const dup = await col('teachers').findOne({ status: { $ne: 'rejected' }, $or: [{ email }, { phone }] });
   if (dup) return res.status(409).json({ error: { code: 'DUPLICATE', message: 'An application with this email or mobile number already exists.' } });
   const uploaded = [];
   let persisted = false;
   try {
-    const { profilePhoto, qualificationProof } = req.validatedTeacherFiles;
+    const { profilePhoto, qualificationProof, aadhaarDocument } = req.validatedTeacherFiles;
     const profileAsset = await uploadPrivateTeacherAsset(profilePhoto.file.buffer, { folder: 'profile-photos', resourceType: 'image' });
     if (!profileAsset?.public_id || !profileAsset?.format) throw new Error('Profile image storage returned incomplete metadata.');
     uploaded.push({ publicId: profileAsset.public_id, resourceType: 'image' });
     const proofAsset = await uploadPrivateTeacherAsset(qualificationProof.file.buffer, { folder: 'qualification-proofs', resourceType: 'raw', format: qualificationProof.format });
     if (!proofAsset?.public_id || !proofAsset?.format) throw new Error('Qualification document storage returned incomplete metadata.');
     uploaded.push({ publicId: proofAsset.public_id, resourceType: 'raw' });
+    const aadhaarAsset = await uploadPrivateTeacherAsset(aadhaarDocument.file.buffer, { folder: 'identity-documents', resourceType: 'raw', format: aadhaarDocument.format });
+    if (!aadhaarAsset?.public_id || !aadhaarAsset?.format) throw new Error('Private identity document storage returned incomplete metadata.');
+    uploaded.push({ publicId: aadhaarAsset.public_id, resourceType: 'raw' });
 
     const timestamp = now(), reference = ref('TCH'), id = await nextId('teachers');
-    const { termsAccepted, ...application } = d;
+    const { termsAccepted, termsVersionId, ...application } = d;
+
     application.documents = {
       profilePhoto: { publicId: profileAsset.public_id, resourceType: 'image', format: profilePhoto.format, mimeType: profilePhoto.mime, size: profilePhoto.file.size, width: profilePhoto.width, height: profilePhoto.height, originalName: profilePhoto.originalName },
       qualificationProof: { publicId: proofAsset.public_id, resourceType: 'raw', format: qualificationProof.format, mimeType: qualificationProof.mime, size: qualificationProof.file.size, originalName: qualificationProof.originalName },
+      aadhaarDocument: { publicId: aadhaarAsset.public_id, resourceType: 'raw', format: aadhaarDocument.format, mimeType: aadhaarDocument.mime, size: aadhaarDocument.file.size },
     };
-    application.termsConsent = { accepted: termsAccepted, acceptedAt: timestamp, version: TEACHER_TERMS_VERSION };
-    await col('teachers').insertOne({ id, reference, status: 'pending', data: JSON.stringify(application), full_name: d.personal.fullName, email, phone,
+    application.termsConsent = { accepted: termsAccepted, acceptedAt: timestamp, version: termsVersionId, versionId: termsVersionId, versionNumber: req.currentTeacherTerms.versionNumber };
+    const teacherRecord = { id, reference, status: 'pending', data: JSON.stringify(application), full_name: d.personal.fullName, email, phone,
       featured: 0, featured_order: 0, public_name: d.personal.fullName, public_location: null, public_photo: null,
-      public_subjects: JSON.stringify(d.teaching.subjects), public_levels: JSON.stringify(d.teaching.classes), created_at: timestamp });
+      public_subjects: JSON.stringify(d.teaching.subjects), public_levels: JSON.stringify(d.teaching.classes), created_at: timestamp };
+    await withDbTransaction(async session => {
+      const state = await col('teacher_terms_state').findOne({ id: 1 }, { session });
+      if (!state || state.current_version_id !== termsVersionId) throw new HttpError(409, 'The Terms & Conditions have changed. Review and accept the latest version before submitting.', { termsVersionId: 'Review the current terms and accept them before resubmitting.' }, 'TERMS_VERSION_STALE');
+      await col('teachers').insertOne(teacherRecord, { session });
+    });
     persisted = true;
     res.status(201).json({ reference, message: 'Application received. It will be reviewed by our team.' });
   } catch (error) {
@@ -167,6 +184,9 @@ publicRouter.post('/teacher-registrations', formLimiter, requireCloudinary, teac
       if (!deleted) console.warn('[teacher-registration] Private upload cleanup did not complete.');
     }));
     if (error instanceof HttpError) throw error;
-    throw new HttpError(uploaded.length === 2 ? 500 : 502, uploaded.length === 2 ? 'Your application could not be saved. Please try again.' : 'The application documents could not be securely stored. Please try again.');
+    throw new HttpError(uploaded.length === 3 ? 500 : 502, uploaded.length === 3 ? 'Your application could not be saved. Please try again.' : 'The application documents could not be securely stored. Please try again.');
   }
 }));
+
+
+

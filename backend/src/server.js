@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { col, now, nextId, connectDb, closeDb } from './db.js';
 import { defaultSettings, defaultContent } from './defaults.js';
+import { initializeTeacherTerms } from './teacherTerms.js';
+import { ensurePageFormSettings } from './pageFormSettings.js';
 import { publicRouter } from './routes/public.js';
 import { adminRouter, uploadDir } from './routes/admin.js';
 import { notFound, errorHandler } from './middleware.js';
@@ -19,12 +21,14 @@ export async function bootstrap() {
     let settings = {}; try { settings = JSON.parse(settingsRow.data || '{}'); } catch {}
     let settingsChanged = false;
     if (!settings.educationCatalog) { settings.educationCatalog = defaultSettings.educationCatalog; settingsChanged = true; }
-    if (settings.whatsapp !== defaultSettings.whatsapp) { settings.whatsapp = defaultSettings.whatsapp; settingsChanged = true; }
+    if (!settings.whatsapp) { settings.whatsapp = defaultSettings.whatsapp; settingsChanged = true; }
     if (settingsChanged) await col('settings').updateOne({ id: 1 }, { $set: { data: JSON.stringify(settings), updated_at: now() } });
   }
   if (!await col('content').findOne({ id: 1 })) {
     const c = JSON.stringify(defaultContent); await col('content').insertOne({ id: 1, draft: c, published: c, draft_updated_at: now(), published_at: now() });
   }
+  await initializeTeacherTerms();
+  await ensurePageFormSettings();
   if (!await col('admins').findOne({})) {
     const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
     const adminPassword = process.env.ADMIN_PASSWORD;
@@ -62,3 +66,4 @@ if (process.argv[1] && path.resolve(fileURLToPath(import.meta.url)) === path.res
     process.exitCode = 1;
   }
 }
+

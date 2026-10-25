@@ -17,6 +17,8 @@ export const config = {
   cloudinaryEnabled: env.CLOUDINARY_ENABLED ? env.CLOUDINARY_ENABLED === 'true' : (env.NODE_ENV === 'production' || Boolean(env.CLOUDINARY_CLOUD_NAME || env.CLOUDINARY_API_KEY || env.CLOUDINARY_API_SECRET)),
   formLimitMax: Number(env.FORM_RATE_LIMIT_MAX || 5),
   formLimitWindowMin: Number(env.FORM_RATE_LIMIT_WINDOW_MIN || 15),
+  teacherUploadMaxMb: Number(env.TEACHER_UPLOAD_MAX_MB || 5),
+  teacherUploadMaxBytes: Number(env.TEACHER_UPLOAD_MAX_MB || 5) * 1024 * 1024,
 };
 if (config.isProd) {
   if (config.jwtSecret === 'change-me' || looksLikePlaceholder(config.jwtSecret) || config.jwtSecret.length < 32) throw new Error('JWT_SECRET must be set to a private strong value (32+ chars) in production');
@@ -42,3 +44,5 @@ if (config.isProd && config.cloudinaryEnabled && [config.cloudinaryCloudName, co
   throw new Error('Replace Cloudinary example placeholders with the protected provider values before production.');
 }
 if (config.mongoUri && !/^mongodb(?:\+srv)?:\/\//i.test(config.mongoUri)) throw new Error('MONGODB_URI must use the mongodb:// or mongodb+srv:// scheme.');
+
+if (!Number.isInteger(config.teacherUploadMaxMb) || config.teacherUploadMaxMb < 1 || config.teacherUploadMaxMb > 20) throw new Error('TEACHER_UPLOAD_MAX_MB must be a whole number from 1 to 20.');

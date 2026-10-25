@@ -2,16 +2,17 @@ import multer from 'multer';
 import { fileTypeFromBuffer } from 'file-type';
 import { imageSize } from 'image-size';
 import { HttpError } from './middleware.js';
+import { config } from './config.js';
 
-export const MAX_TEACHER_UPLOAD_BYTES = 5 * 1024 * 1024;
-export const TEACHER_TERMS_VERSION = 'teacher-terms-v1';
+export const MAX_TEACHER_UPLOAD_BYTES = config.teacherUploadMaxBytes;
 
 export const teacherRegistrationUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_TEACHER_UPLOAD_BYTES, files: 2, fields: 1, fieldSize: 200 * 1024, parts: 3 },
+  limits: { fileSize: MAX_TEACHER_UPLOAD_BYTES, files: 3, fields: 1, fieldSize: 200 * 1024, parts: 4 },
 }).fields([
   { name: 'profilePhoto', maxCount: 1 },
   { name: 'qualificationProof', maxCount: 1 },
+  { name: 'aadhaarDocument', maxCount: 1 },
 ]);
 
 export function parseTeacherApplication(req, _res, next) {
@@ -35,12 +36,14 @@ export async function validateTeacherRegistrationFiles(req, _res, next) {
   try {
     const profilePhoto = req.files?.profilePhoto?.[0];
     const qualificationProof = req.files?.qualificationProof?.[0];
+    const aadhaarDocument = req.files?.aadhaarDocument?.[0];
     const missing = {};
     if (!profilePhoto) missing.profilePhoto = 'A professional profile photo is required.';
     if (!qualificationProof) missing.qualificationProof = 'Highest educational qualification proof is required.';
-    if (Object.keys(missing).length) throw new HttpError(422, 'Upload both required documents to continue.', missing, 'UPLOAD_REQUIRED');
-    if (profilePhoto.size > MAX_TEACHER_UPLOAD_BYTES || qualificationProof.size > MAX_TEACHER_UPLOAD_BYTES) {
-      throw new HttpError(413, 'Each uploaded file must be 5 MB or smaller.', undefined, 'FILE_TOO_LARGE');
+    if (!aadhaarDocument) missing.aadhaarDocument = 'An Aadhaar identity verification document is required.';
+    if (Object.keys(missing).length) throw new HttpError(422, 'Upload all required documents to continue.', missing, 'UPLOAD_REQUIRED');
+    if (profilePhoto.size > MAX_TEACHER_UPLOAD_BYTES || qualificationProof.size > MAX_TEACHER_UPLOAD_BYTES || aadhaarDocument.size > MAX_TEACHER_UPLOAD_BYTES) {
+      throw new HttpError(413, `Each uploaded file must be ${config.teacherUploadMaxMb} MB or smaller.`, undefined, 'FILE_TOO_LARGE');
     }
 
     const profileType = await fileTypeFromBuffer(profilePhoto.buffer);
@@ -57,9 +60,14 @@ export async function validateTeacherRegistrationFiles(req, _res, next) {
     if (!proofType || !['application/pdf', 'image/jpeg', 'image/png'].includes(proofType.mime)) {
       throw new HttpError(415, 'Qualification proof must be a valid PDF, JPG, JPEG, or PNG file.', { qualificationProof: 'Choose a valid PDF, JPG, or PNG file.' }, 'UNSUPPORTED_FILE');
     }
+    const aadhaarType = await fileTypeFromBuffer(aadhaarDocument.buffer);
+    if (!aadhaarType || !['application/pdf', 'image/jpeg', 'image/png'].includes(aadhaarType.mime)) {
+      throw new HttpError(415, 'Aadhaar document must be a valid PDF, JPG, JPEG, or PNG file.', { aadhaarDocument: 'Choose a valid PDF, JPG, or PNG file.' }, 'UNSUPPORTED_FILE');
+    }
     req.validatedTeacherFiles = {
       profilePhoto: { file: profilePhoto, mime: profileType.mime, format: profileType.ext, width: dimensions.width, height: dimensions.height, originalName: safeOriginalName(profilePhoto) },
       qualificationProof: { file: qualificationProof, mime: proofType.mime, format: proofType.ext, originalName: safeOriginalName(qualificationProof) },
+      aadhaarDocument: { file: aadhaarDocument, mime: aadhaarType.mime, format: aadhaarType.ext, originalName: safeOriginalName(aadhaarDocument) },
     };
     next();
   } catch (error) { next(error); }

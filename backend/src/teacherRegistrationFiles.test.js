@@ -13,7 +13,7 @@ function png(width = 256, height = 256) {
 }
 const pdf = Buffer.from('%PDF-1.4\n1 0 obj <<>> endobj\ntrailer <<>>\n%%EOF');
 const file = (buffer, mimetype, originalname) => ({ buffer, mimetype, size: buffer.length, originalname });
-const validFiles = () => ({ profilePhoto: [file(png(), 'image/jpeg', 'portrait.png')], qualificationProof: [file(pdf, 'application/octet-stream', 'degree.pdf')] });
+const validFiles = () => ({ profilePhoto: [file(png(), 'image/jpeg', 'portrait.png')], qualificationProof: [file(pdf, 'application/octet-stream', 'degree.pdf')], aadhaarDocument: [file(pdf, 'application/pdf', 'identity.pdf')] });
 
 function validateFiles(files) {
   const req = { files };
@@ -26,11 +26,16 @@ test('accepts required files from their signatures and records verified metadata
   assert.equal(req.validatedTeacherFiles.profilePhoto.format, 'png');
   assert.equal(req.validatedTeacherFiles.qualificationProof.mime, 'application/pdf');
   assert.equal(req.validatedTeacherFiles.qualificationProof.format, 'pdf');
+  assert.equal(req.validatedTeacherFiles.aadhaarDocument.mime, 'application/pdf');
+  assert.equal(req.validatedTeacherFiles.aadhaarDocument.format, 'pdf');
+  assert.equal('originalName' in req.validatedTeacherFiles.aadhaarDocument, true);
 });
 
-test('rejects a missing profile photo or qualification proof', async () => {
+test('rejects a missing profile photo, qualification proof, or Aadhaar document', async () => {
   await assert.rejects(validateFiles({ qualificationProof: validFiles().qualificationProof }), error => error instanceof HttpError && error.status === 422 && !!error.details.profilePhoto);
   await assert.rejects(validateFiles({ profilePhoto: validFiles().profilePhoto }), error => error instanceof HttpError && error.status === 422 && !!error.details.qualificationProof);
+  const missingAadhaar = validFiles(); delete missingAadhaar.aadhaarDocument;
+  await assert.rejects(validateFiles(missingAadhaar), error => error instanceof HttpError && error.status === 422 && !!error.details.aadhaarDocument);
 });
 
 test('rejects file content that is not an allowed image or document', async () => {
@@ -40,10 +45,14 @@ test('rejects file content that is not an allowed image or document', async () =
   const invalidProof = validFiles();
   invalidProof.qualificationProof = [file(Buffer.from('not a document'), 'application/pdf', 'proof.pdf')];
   await assert.rejects(validateFiles(invalidProof), error => error instanceof HttpError && error.status === 415);
+  const invalidAadhaar = validFiles(); invalidAadhaar.aadhaarDocument = [file(Buffer.from('not a document'), 'application/pdf', 'identity.pdf')];
+  await assert.rejects(validateFiles(invalidAadhaar), error => error instanceof HttpError && error.status === 415 && !!error.details.aadhaarDocument);
 });
 
-test('rejects either file above the 5 MB limit', async () => {
+test('rejects any registration file above the configured size limit', async () => {
   const files = validFiles();
   files.qualificationProof[0].size = MAX_TEACHER_UPLOAD_BYTES + 1;
   await assert.rejects(validateFiles(files), error => error instanceof HttpError && error.status === 413);
+  const oversizedAadhaar = validFiles(); oversizedAadhaar.aadhaarDocument[0].size = MAX_TEACHER_UPLOAD_BYTES + 1;
+  await assert.rejects(validateFiles(oversizedAadhaar), error => error instanceof HttpError && error.status === 413);
 });

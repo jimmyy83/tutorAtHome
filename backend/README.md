@@ -8,7 +8,7 @@ Node 20+ · Express 5 · MongoDB Node.js driver · JWT · Zod.
 2. `npm install`
 3. `npm start`
 
-The API requires MongoDB at startup and exits with a configuration/connection error if it is unavailable. It never falls back to SQLite. MongoDB indexes are created on startup. Admin passwords continue to use bcrypt; admin sessions are signed JWTs and are not persisted in a separate session collection.
+The API requires MongoDB at startup and exits with a configuration/connection error if it is unavailable. It never falls back to SQLite. MongoDB indexes are created on startup. Terms publication and consent-version checks use MongoDB transactions, so use Atlas or another replica-set MongoDB deployment (a standalone local mongod is not sufficient). Admin passwords continue to use bcrypt; admin sessions are signed JWTs and are not persisted in a separate session collection.
 
 ### Deliberate local admin password reset
 
@@ -34,6 +34,7 @@ Set the `sync: false` values in the Render dashboard. Do not paste real credenti
 | `CLOUDINARY_ENABLED` | Defaults to enabled in production; Render config sets it to `true`. If enabled, the three Cloudinary values below are required. |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Required when Cloudinary uploads are enabled. Keep the API secret server-side only. |
 | `FORM_RATE_LIMIT_MAX`, `FORM_RATE_LIMIT_WINDOW_MIN` | Optional; default to 5 public form requests per 15 minutes. Forms also include a server-checked honeypot field. |
+| `TEACHER_UPLOAD_MAX_MB` | Optional per-file teacher document limit; defaults to 5 MB and accepts whole numbers from 1 to 20. |
 
 On Vercel, set `VITE_API_BASE_URL` to `<Render HTTPS origin>/api`. Never add `JWT_SECRET`, `MONGODB_URI`, admin passwords, or Cloudinary API secrets to Vercel `VITE_` variables.
 
@@ -49,7 +50,9 @@ To seed demo teachers during development only, run `npm run seed` with a configu
 
 Teacher profile photos are edited from the admin Teachers tab. The owner photo is part of the existing homepage content editor and takes effect after publishing. Campaign images are managed in the Campaigns editor. Teacher and campaign references are updated before old Cloudinary media is considered for deletion; owner photos retained in content revisions remain available for restore.
 
-Teacher registration uploads use the existing backend Cloudinary credentials. The required professional photo and highest-qualification proof are signature-checked and limited to 5 MB each; the assets are uploaded with authenticated delivery and are not exposed through public APIs. Editors retrieve them through the authenticated `/api/admin/teachers/:id/documents/:kind` routes. The form submits multipart data with an `application` JSON field plus `profilePhoto` and `qualificationProof` files. Terms acceptance is validated server-side and recorded with a server timestamp and terms version.
+Teacher registration uploads use the existing backend Cloudinary credentials. The required professional photo, highest-qualification proof, and Aadhaar identity document are signature-checked and limited to 5 MB each by default. Configure `TEACHER_UPLOAD_MAX_MB` (whole number 1–20) to change the per-file limit. Teacher documents use authenticated Cloudinary delivery and are not exposed through public APIs. Admins and editors retrieve them through the editor-authorized `/api/admin/teachers/:id/documents/:kind` routes; Aadhaar metadata excludes the submitted filename and the download uses a generic filename. The form submits multipart data with an `application` JSON field plus `profilePhoto`, `qualificationProof`, and `aadhaarDocument` files.
+
+The five existing teacher conditions are migrated at startup to immutable published version `teacher-terms-v1` when no published version is configured; no new business terms are added. The current version is available at `/api/public/terms`. Admins and editors can save drafts and explicitly publish new versions from the Terms & Conditions tab. Version publication is transactional and guarded by a revision check. Teacher consent stores the accepted version ID, version number, and server-generated acceptance time on each registration; publishing a newer version does not rewrite historic consent.
 
 Production requires a strong `JWT_SECRET` (32+ characters) and `MONGODB_URI`. Never commit `.env` or place database credentials in source code.
 

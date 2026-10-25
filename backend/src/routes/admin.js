@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
+import { changeAdminPassword } from '../adminPassword.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { col, json, now, nextId, toId, escapeRegex } from '../db.js';
@@ -10,6 +11,8 @@ import { bannerRow } from './public.js';
 import { privateTeacherAssetDownloadUrl, requireCloudinary } from '../cloudinary.js';
 import { cleanupUnreferencedCloudImage, localImageReferenced, storeCloudMedia } from '../imageAssets.js';
 import { authenticateAdmin } from '../adminAuth.js';
+import { publishTeacherTerms, saveTeacherTermsDraft } from '../teacherTerms.js';
+import { getPageFormSettings, publishPageFormDraft, savePageFormDraft } from '../pageFormSettings.js';
 
 export const adminRouter = Router();
 adminRouter.post('/auth/login', loginLimiter, validate(S.loginSchema), wrap(async (req, res) => {
@@ -18,6 +21,46 @@ adminRouter.post('/auth/login', loginLimiter, validate(S.loginSchema), wrap(asyn
   res.json({ token: signToken({ ...a, id: a.id }), admin: { id: a.id, email: a.email, name: a.name, role: a.role } });
 }));
 const auth = requireAdmin(), editor = requireAdmin(['admin', 'editor']), superAdmin = requireAdmin(['admin']);
+adminRouter.put('/auth/password', loginLimiter, superAdmin, validate(S.passwordChangeSchema), wrap(async (req, res) => {
+  const account = await col('admins').findOne({ id: req.admin.sub });
+  const result = await changeAdminPassword({
+    account,
+    currentPassword: req.body.currentPassword,
+    newPassword: req.body.newPassword,
+    updatePassword: (id, oldHash, passwordHash) => col('admins').updateOne({ id, password_hash: oldHash }, { $set: { password_hash: passwordHash } }),
+  });
+  res.json(result);
+}));const termsVersionRow = version => ({ id: version.id, versionNumber: version.version_number, status: version.status,
+  createdAt: version.created_at, publishedAt: version.published_at, updatedAt: version.updated_at,
+  publishedBy: version.published_by, updatedBy: version.updated_by, changeSummary: version.change_summary || '',
+  isCurrent: !!version.isCurrent });
+adminRouter.get('/terms', editor, wrap(async (_req, res) => {
+  const state = await col('teacher_terms_state').findOne({ id: 1 });
+  if (!state?.current_version_id) throw new HttpError(503, 'Published terms are temporarily unavailable.');
+  const [current, draft, versions] = await Promise.all([
+    col('teacher_terms_versions').findOne({ id: state.current_version_id, status: 'published' }),
+    state.draft_version_id ? col('teacher_terms_versions').findOne({ id: state.draft_version_id, status: 'draft' }) : null,
+    col('teacher_terms_versions').find({}, { projection: { id: 1, version_number: 1, status: 1, created_at: 1, published_at: 1, updated_at: 1, published_by: 1, updated_by: 1, change_summary: 1 } }).sort({ version_number: -1 }).toArray(),
+  ]);
+  if (!current) throw new HttpError(503, 'Published terms are temporarily unavailable.');
+  res.json({ revision: state.revision || 0, current: { ...termsVersionRow(current), content: current.content },
+    draft: draft ? { ...termsVersionRow(draft), content: draft.content, baseVersionId: draft.base_version_id } : null,
+    versions: versions.map(version => termsVersionRow({ ...version, isCurrent: version.id === current.id })) });
+}));
+adminRouter.get('/terms/versions/:id', editor, wrap(async (req, res) => {
+  const version = await col('teacher_terms_versions').findOne({ id: req.params.id });
+  if (!version) throw new HttpError(404, 'Terms version not found.');
+  const state = await col('teacher_terms_state').findOne({ id: 1 }, { projection: { current_version_id: 1 } });
+  res.json({ ...termsVersionRow({ ...version, isCurrent: state?.current_version_id === version.id }), content: version.content, baseVersionId: version.base_version_id || null });
+}));
+adminRouter.put('/terms/draft', editor, validate(S.teacherTermsDraftSchema), wrap(async (req, res) => {
+  const draft = await saveTeacherTermsDraft(req.body, req.admin);
+  res.json({ ok: true, ...draft });
+}));
+adminRouter.post('/terms/publish', editor, validate(S.teacherTermsPublishSchema), wrap(async (req, res) => {
+  const published = await publishTeacherTerms(req.body, req.admin);
+  res.json({ ok: true, ...published });
+}));
 adminRouter.get('/auth/me', auth, (req, res) => res.json({ admin: { id: req.admin.sub, email: req.admin.email, name: req.admin.name, role: req.admin.role } }));
 adminRouter.get('/dashboard', auth, wrap(async (_req, res) => {
   const [totalEnquiries, totalTeacherApplications, pendingTeacherApprovals, featuredTeachers, recentEnquiries, recentChanges] = await Promise.all([
@@ -52,7 +95,17 @@ adminRouter.post('/content/revisions/:id/restore', editor, wrap(async (req, res)
   const r = await col('revisions').findOne({ id: toId(req.params.id) }); if (!r) throw new HttpError(404, 'Revision not found.');
   await col('content').updateOne({ id: 1 }, { $set: { draft: r.snapshot, draft_updated_at: now() } }); res.json({ ok: true, message: 'Revision restored to draft. Publish to make it live.' });
 }));
+adminRouter.get('/page-form-settings', superAdmin, wrap(async (_req,res) => res.json(await getPageFormSettings())));
+adminRouter.put('/page-form-settings/draft', superAdmin, validate(S.pageFormDraftSchema), wrap(async (req,res) => res.json(await savePageFormDraft(req.body))));
+adminRouter.post('/page-form-settings/publish', superAdmin, validate(S.pageFormPublishSchema), wrap(async (req,res) => res.json(await publishPageFormDraft(req.body, req.admin))));
 adminRouter.get('/settings', auth, wrap(async (_req, res) => res.json(json((await col('settings').findOne({ id: 1 }))?.data, {}))));
+adminRouter.put('/leads/whatsapp', superAdmin, validate(S.whatsappSettingsSchema), wrap(async (req, res) => {
+  const timestamp = now();
+  const existing = json((await col('settings').findOne({ id: 1 }))?.data, {});
+  const settings = { ...existing, whatsapp: req.body.whatsapp };
+  await col('settings').updateOne({ id: 1 }, { $set: { data: JSON.stringify(settings), updated_at: timestamp } }, { upsert: true });
+  res.json({ ok: true, whatsapp: settings.whatsapp, updatedAt: timestamp });
+}));
 adminRouter.put('/settings', superAdmin, validate(S.settingsSchema), wrap(async (req, res) => {
   const timestamp = now(), existing = json((await col('settings').findOne({ id: 1 }))?.data, {}), updated = { ...req.body };
   if (Array.isArray(updated.socialLinks)) {
@@ -124,12 +177,12 @@ adminRouter.get('/teachers', auth, wrap(async (req, res) => {
   const [total, docs] = await Promise.all([col('teachers').countDocuments(filter), col('teachers').find(filter).sort({ id: -1 }).skip((page - 1) * limit).limit(limit).toArray()]);
   res.json({ items: docs.map(teacherListRow), page, limit, total, totalPages: Math.ceil(total / limit) });
 }));
-adminRouter.get('/teachers/:id', auth, wrap(async (req, res) => {
+adminRouter.get('/teachers/:id', editor, wrap(async (req, res) => {
   const t = await col('teachers').findOne({ id: toId(req.params.id) }); if (!t) throw new HttpError(404, 'Teacher not found.');
   res.json({ ...teacherListRow(t), application: json(t.data), reviewedBy: t.reviewed_by, reviewedAt: t.reviewed_at });
 }));
 adminRouter.get('/teachers/:id/documents/:kind', editor, requireCloudinary, wrap(async (req, res) => {
-  const field = ({ 'profile-photo': 'profilePhoto', 'qualification-proof': 'qualificationProof' })[req.params.kind];
+  const field = ({ 'profile-photo': 'profilePhoto', 'qualification-proof': 'qualificationProof', 'aadhaar-document': 'aadhaarDocument' })[req.params.kind];
   if (!field) throw new HttpError(404, 'Teacher document not found.');
   const teacher = await col('teachers').findOne({ id: toId(req.params.id) }); if (!teacher) throw new HttpError(404, 'Teacher not found.');
   const document = json(teacher.data, {})?.documents?.[field];
@@ -141,11 +194,11 @@ adminRouter.get('/teachers/:id/documents/:kind', editor, requireCloudinary, wrap
     upstream = await fetch(downloadUrl, { signal: AbortSignal.timeout(10000) });
     if (!upstream.ok) throw new Error('download failed');
     const declaredSize = Number(upstream.headers.get('content-length') || 0);
-    if (declaredSize > 5 * 1024 * 1024) throw new Error('invalid size');
+    if (declaredSize > config.teacherUploadMaxBytes) throw new Error('invalid size');
     bytes = Buffer.from(await upstream.arrayBuffer());
   } catch { throw new HttpError(502, 'The private document could not be retrieved. Please try again.'); }
-  if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new HttpError(502, 'The private document could not be retrieved. Please try again.');
-  const name = String(document.originalName || 'teacher-document').replace(/[\\"\r\n]/g, '_');
+  if (!bytes.length || bytes.length > config.teacherUploadMaxBytes) throw new HttpError(502, 'The private document could not be retrieved. Please try again.');
+  const name = field === 'aadhaarDocument' ? `identity-verification.${document.format}` : String(document.originalName || 'teacher-document').replace(/[\\"\r\n]/g, '_');
   res.setHeader('Cache-Control', 'private, no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Type', document.mimeType);
@@ -239,3 +292,4 @@ adminRouter.post('/enquiries/:id/notes', editor, validate(S.noteSchema), wrap(as
   const id = toId(req.params.id); if (!await col('enquiries').findOne({ id }, { projection: { id: 1 } })) throw new HttpError(404, 'Enquiry not found.');
   await col('enquiry_notes').insertOne({ id: await nextId('enquiry_notes'), enquiry_id: id, note: req.body.note, author: req.admin.name || req.admin.email, kind: 'note', created_at: now() }); res.status(201).json({ ok: true });
 }));
+

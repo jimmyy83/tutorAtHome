@@ -15,7 +15,7 @@ const teacher = {
   academics: { class10: { board: 'CBSE', year: 2006, score: '80%' }, class12: { board: 'CBSE', year: 2008, score: '80%' }, graduation: { degree: 'BA', university: 'Test University', year: 2011, score: '80%' }, certifications: [] },
   teaching: { classes: ['10'], subjects: ['Mathematics'], medium: 'English', experienceYears: 5, previousInstitutions: '', preferredAreas: '', homeTuition: true, commute: 'Vehicle' },
   availability: { days: ['Monday'], timeSlots: ['Evening'], teachingStyle: '', freeDemo: false, references: '' },
-  fees: { minMonthly: 1000, maxMonthly: 2000, paymentModes: ['UPI'] }, termsAccepted: true,
+  fees: { minMonthly: 1000, maxMonthly: 2000, paymentModes: ['UPI'] }, termsVersionId: 'teacher-terms-v1', termsAccepted: true,
 };
 
 function runMiddleware(middleware, body, ip = '198.51.100.31') {
@@ -88,6 +88,8 @@ test('teacher consent must be present and exactly true at the backend schema bou
   await assert.rejects(runMiddleware(validate(teacherRegistrationSchema), { ...teacher, termsAccepted: false }), error => error instanceof HttpError && error.status === 422 && !!error.details.termsAccepted);
   const { termsAccepted: _omitted, ...withoutConsent } = teacher;
   await assert.rejects(runMiddleware(validate(teacherRegistrationSchema), withoutConsent), error => error instanceof HttpError && error.status === 422 && !!error.details.termsAccepted);
+  const { termsVersionId: _versionOmitted, ...withoutVersion } = teacher;
+  await assert.rejects(runMiddleware(validate(teacherRegistrationSchema), withoutVersion), error => error instanceof HttpError && error.status === 422 && !!error.details.termsVersionId);
 });
 
 test('teacher registration requires structured location and a valid Indian PIN code', async () => {
