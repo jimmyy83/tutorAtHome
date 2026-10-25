@@ -13,6 +13,7 @@ const pageCopy={
  contact:{path:'/contact',title:'Contact TutorAtHome | Prayagraj & Lucknow',description:'Contact TutorAtHome about home tuition, online learning, teacher registration, and service enquiries in Prayagraj or Lucknow.'},
  parentEnquiry:{path:'/parent-enquiry',title:'Find a Home Tutor | Parent Enquiry | TutorAtHome',description:'Tell TutorAtHome your learner’s class, subjects, preferred schedule, and city. Enquire about home or online tuition in Prayagraj and Lucknow.'},
  teacherRegistration:{path:'/teacher-registration',title:'Register as a Tutor | TutorAtHome',description:'Register your interest in teaching with TutorAtHome. Submit your teaching profile for review and our team will follow up about suitable opportunities.'},
+ terms:{path:'/terms',title:'Teacher Terms & Conditions | TutorAtHome',description:'Read the current published TutorAtHome teacher registration Terms & Conditions and see when this version was last updated.'},
  notFound:{path:'/',title:'Page not found | TutorAtHome',description:'The requested TutorAtHome page could not be found.'},
  admin:{path:'/admin',title:'Admin sign in | TutorAtHome',description:'TutorAtHome administration.'},
 };

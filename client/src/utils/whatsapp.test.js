@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSubmissionGuard, startWhatsAppSubmission } from './whatsapp.js';
+import { createSubmissionGuard, startWhatsAppSubmission, buildWhatsAppUrl, resolveWhatsAppRecipient } from './whatsapp.js';
 
 const originalWindow = globalThis.window;
 
@@ -57,4 +57,11 @@ test('submission guard blocks rapid repeat clicks until explicitly reset', () =>
   assert.equal(guard.started, true);
   guard.reset();
   assert.equal(guard.tryStart(), true);
+});
+
+test('configured WhatsApp numbers are normalized and never replaced with a fixed recipient', () => {
+  assert.equal(resolveWhatsAppRecipient('+91 98765-43210'), '919876543210');
+  assert.match(buildWhatsAppUrl('9876543210'), /^https:\/\/wa\.me\/919876543210\?/);
+  assert.equal(buildWhatsAppUrl('not-a-number'), '');
+  assert.equal(resolveWhatsAppRecipient(undefined), '919532761193');
 });

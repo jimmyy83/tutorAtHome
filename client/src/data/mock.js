@@ -4,7 +4,7 @@ export const featuredTeachers=[
 {id:2,name:'Rahul Verma',location:'Lucknow, UP',photo:null,subjects:['Chemistry','Biology']},
 {id:3,name:'Priya Singh',location:'Kanpur, UP',photo:null,subjects:['English','Social Science']},
 {id:4,name:'Imran Khan',location:'Prayagraj, UP',photo:null,subjects:['Mathematics','Computer Science']}];
-export const contact={phone:'+91 00000 00000 (placeholder)',whatsapp:'919532761193',email:'hello@example.com (placeholder)'};
+export const contact={phone:'+91 00000 00000 (placeholder)',email:'hello@example.com (placeholder)'};
 export const subjectOptions=['Mathematics','Science','Physics','Chemistry','Biology','English','Hindi','Social Science','Computer Science','Accountancy'];
 export const steps=[
 {t:'Share your requirements',d:'Submit class, subjects, location and budget through the enquiry form.'},

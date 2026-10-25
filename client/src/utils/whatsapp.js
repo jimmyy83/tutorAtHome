@@ -12,12 +12,13 @@ export function normalizeWhatsAppRecipient(value) {
 
 export function resolveWhatsAppRecipient(configuredRecipient) {
   const normalized = normalizeWhatsAppRecipient(configuredRecipient);
-  return normalized === DEFAULT_WHATSAPP_RECIPIENT ? normalized : DEFAULT_WHATSAPP_RECIPIENT;
+  if (normalized) return normalized;
+  return configuredRecipient == null || configuredRecipient === '' ? DEFAULT_WHATSAPP_RECIPIENT : '';
 }
 
 export function buildWhatsAppUrl(recipient, message = 'Hello TutorAtHome, I would like to know more about your services.') {
   const number = resolveWhatsAppRecipient(recipient);
-  if (typeof message !== 'string' || !message.trim()) return '';
+  if (!number || typeof message !== 'string' || !message.trim()) return '';
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
 }
 
