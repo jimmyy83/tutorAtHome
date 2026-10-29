@@ -436,6 +436,13 @@ html.dark body{background:var(--page-bg);color:var(--text-secondary)}
 :root:not(.dark) .subject-chip:hover{border-color:#e3aab1;background:var(--light-card-hover);box-shadow:0 6px 18px rgba(215,25,45,.09)}
 
 /* Shared treatment for the larger form, contact, location and CMS surfaces. */
+:root:not(.dark) .teacher-registration-layout>.mt-8>aside,
+:root:not(.dark) .teacher-registration-layout>.mt-8>[data-reveal]{position:relative;isolation:isolate;border-color:#eadfe1;background:var(--light-card-neutral);box-shadow:0 8px 24px rgba(31,15,18,.05);transition:transform .28s cubic-bezier(.22,1,.36,1),border-color .28s,box-shadow .28s}
+:root:not(.dark) .teacher-registration-layout>.mt-8>aside::after,
+:root:not(.dark) .teacher-registration-layout>.mt-8>[data-reveal]::after{position:absolute;inset:0;z-index:0;border-radius:inherit;content:"";pointer-events:none;background:var(--light-card-hover);opacity:0;transition:opacity .3s ease}
+:root:not(.dark) .teacher-registration-layout>.mt-8>aside>*,
+:root:not(.dark) .teacher-registration-layout>.mt-8>[data-reveal]>*{position:relative;z-index:1}
+@media (hover:hover) and (pointer:fine){:root:not(.dark) .teacher-registration-layout>.mt-8>aside:hover,:root:not(.dark) .teacher-registration-layout>.mt-8>[data-reveal]:hover{transform:translateY(-3px);border-color:rgba(215,25,45,.3);box-shadow:0 16px 32px rgba(45,17,22,.09),0 4px 14px rgba(215,25,45,.06)}:root:not(.dark) .teacher-registration-layout>.mt-8>aside:hover::after,:root:not(.dark) .teacher-registration-layout>.mt-8>[data-reveal]:hover::after{opacity:1}}
 :root:not(.dark) :is(.owner-surface [data-reveal]:not(.section-heading),.owner-surface address,.form-intro+[data-reveal],.max-w-3xl>[data-reveal][class*="rounded-[2rem]"],.max-w-3xl>[data-reveal][class*="rounded-[1.7rem]"],.max-w-4xl>[data-reveal][class*="rounded-[1.6rem]"],.max-w-5xl>.mt-8>aside,.max-w-5xl>.mt-8>[data-reveal],.max-w-7xl>div[class*="rounded-[1.5rem]"],.social-links-manager,.admin-shell section[class*="rounded-[1.4rem]"],.admin-shell fieldset[class*="rounded-xl"]){
  position:relative;isolation:isolate;border-color:#eadfe1;background:var(--light-card-neutral);box-shadow:0 8px 24px rgba(31,15,18,.05);
  transition:transform .28s cubic-bezier(.22,1,.36,1),border-color .28s,box-shadow .28s;
