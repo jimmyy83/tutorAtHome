@@ -1,4 +1,5 @@
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileTypeFromBuffer } from 'file-type';
 import { imageSize } from 'image-size';
 import { col, json, nextId, now } from './db.js';
@@ -50,23 +51,37 @@ function ownerUses(value, publicId) {
   return (content.sections || []).some(section => section?.id === 'owner' && section.imagePublicId === publicId);
 }
 
-async function referenced(publicId) {
+export async function isCloudImageReferenced(publicId) {
   const media = await col('media').findOne({ public_id: publicId }, { projection: { secure_url: 1 } });
   const secureUrl = media?.secure_url;
-  const [teachers, legacyTeachers, banners, legacyBanners, contents] = await Promise.all([
+  const retainedAssetReference = await col('retained_assets').findOne({ $or: [{ public_id: publicId }, ...(secureUrl ? [{ secure_url_hash: crypto.createHash('sha256').update(secureUrl).digest('hex') }] : [])] }, { projection: { _id: 1 } });
+  if (retainedAssetReference) return true;
+  const [duplicateMedia, teachers, legacyTeachers, banners, legacyBanners, contents] = await Promise.all([
+    col('media').countDocuments({ public_id: publicId }),
     col('teachers').countDocuments({ public_photo_id: publicId }),
     secureUrl ? col('teachers').countDocuments({ public_photo: secureUrl }) : 0,
     col('banners').countDocuments({ image_public_id: publicId }),
     secureUrl ? col('banners').countDocuments({ image_url: secureUrl }) : 0,
     col('content').find({}, { projection: { draft: 1, published: 1 } }).toArray(),
   ]);
-  if (teachers + legacyTeachers + banners + legacyBanners || contents.some(row => ownerUses(row.draft, publicId) || ownerUses(row.published, publicId) || (secureUrl && (containsValue(row.draft, secureUrl) || containsValue(row.published, secureUrl))))) return true;
+  if (duplicateMedia > 1 || teachers + legacyTeachers + banners + legacyBanners || contents.some(row => ownerUses(row.draft, publicId) || ownerUses(row.published, publicId) || (secureUrl && (containsValue(row.draft, secureUrl) || containsValue(row.published, secureUrl))))) return true;
+  // Teacher applications store private document IDs inside JSON data. They are
+  // not media-library entries, but checking them protects against deleting a
+  // Cloudinary asset if a reference was reused or migrated into that record.
+  for await (const teacher of col('teachers').find({}, { projection: { data: 1 } })) {
+    const application = json(teacher.data, {});
+    if (containsValue(application, publicId) || (secureUrl && containsValue(application, secureUrl))) return true;
+  }
+  for await (const enquiry of col('enquiries').find({}, { projection: { data: 1 } })) {
+    const details = json(enquiry.data, {});
+    if (containsValue(details, publicId) || (secureUrl && containsValue(details, secureUrl))) return true;
+  }
   const revisions = col('revisions').find({}, { projection: { snapshot: 1 } });
   for await (const revision of revisions) if (ownerUses(revision.snapshot, publicId) || (secureUrl && containsValue(revision.snapshot, secureUrl))) return true;
   return false;
 }
 
-function containsValue(value, expected) {
+export function containsValue(value, expected) {
   if (value === expected) return true;
   if (Array.isArray(value)) return value.some(item => containsValue(item, expected));
   if (value && typeof value === 'object') return Object.values(value).some(item => containsValue(item, expected));
@@ -92,7 +107,7 @@ export async function cleanupUnreferencedCloudImage(publicId) {
   if (!publicId) return { deleted: false, referenced: false, missing: true };
   const media = await col('media').findOne({ public_id: publicId }, { projection: { id: 1 } });
   if (!media) return { deleted: false, referenced: false, missing: true };
-  if (await referenced(publicId)) return { deleted: false, referenced: true };
+  if (await isCloudImageReferenced(publicId)) return { deleted: false, referenced: true };
   let deleted = false;
   try { deleted = await deleteCloudImage(publicId); }
   catch { deleted = false; }

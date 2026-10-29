@@ -50,12 +50,18 @@ export async function nextId(name) {
 }
 async function ensureIndexes() {
   const indexes = [
-    ...['admins', 'settings', 'content', 'revisions', 'banners', 'media', 'teachers', 'enquiries', 'enquiry_notes', 'teacher_terms_state', 'page_form_settings'].map(name => [name, [{ key: { id: 1 }, options: { unique: true } }]]),
+    ...['admins', 'settings', 'content', 'revisions', 'banners', 'media', 'teachers', 'enquiries', 'enquiry_notes', 'teacher_terms_state', 'page_form_settings', 'admin_actions', 'enquiry_idempotency', 'enquiry_phone_claims'].map(name => [name, [{ key: { id: 1 }, options: { unique: true } }]]),
+    ['teacher_consent_history', [{ key: { teacher_id: 1, retained_at: -1 } }]],
+    ['retained_assets', [{ key: { public_id: 1 } }, { key: { secure_url_hash: 1 } }, { key: { record_type: 1, record_id: 1 } }]],
     ['page_form_settings_history', [{ key: { revision: 1 }, options: { unique: true } }]],
     ['teacher_terms_versions', [{ key: { id: 1 }, options: { unique: true } }, { key: { version_number: 1 }, options: { unique: true } }, { key: { status: 1, published_at: -1 } }]],
     ['admins', [{ key: { email: 1 }, options: { unique: true } }]],
-    ['teachers', [{ key: { reference: 1 }, options: { unique: true } }, { key: { email: 1 } }, { key: { phone: 1 } }, { key: { status: 1, featured: 1, featured_order: 1 } }, { key: { status: 1, location_state_id: 1, location_district_id: 1, location_locality_id: 1 } }]],
-    ['enquiries', [{ key: { reference: 1 }, options: { unique: true } }, { key: { status: 1, created_at: -1 } }]],
+    ['teachers', [{ key: { reference: 1 }, options: { unique: true } }, { key: { email: 1 } }, { key: { phone: 1 } }, { key: { email_normalized: 1 }, options: { unique: true, sparse: true } }, { key: { phone_normalized: 1 }, options: { unique: true, sparse: true } }, { key: { status: 1, blocked: 1, featured: 1, featured_order: 1 } }, { key: { status: 1, location_state_id: 1, location_district_id: 1, location_locality_id: 1 } }]],
+    ['enquiries', [{ key: { reference: 1 }, options: { unique: true } }, { key: { phone: 1 } }, { key: { phone_normalized: 1 } }, { key: { status: 1, created_at: -1 } }]],
+    ['enquiry_phone_claims', [{ key: { phone_normalized: 1 }, options: { unique: true } }, { key: { enquiry_id: 1 } }]],
+    ['enquiry_idempotency', [{ key: { key: 1 }, options: { unique: true } }]],
+    ['parent_enquiry_rate_limits', [{ key: { expires_at: 1 }, options: { expireAfterSeconds: 0 } }]],
+    ['admin_actions', [{ key: { id: 1 }, options: { unique: true } }, { key: { created_at: -1 } }, { key: { record_type: 1, record_id: 1, created_at: -1 } }]],
     ['banners', [{ key: { enabled: 1, archived: 1, priority: -1 } }]],
     ['enquiry_notes', [{ key: { enquiry_id: 1, id: -1 } }]],
   ];

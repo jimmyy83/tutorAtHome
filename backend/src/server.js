@@ -13,6 +13,7 @@ import { ensurePageFormSettings } from './pageFormSettings.js';
 import { publicRouter } from './routes/public.js';
 import { adminRouter, uploadDir } from './routes/admin.js';
 import { notFound, errorHandler } from './middleware.js';
+import { attachRequestId } from './teacherRegistrationDiagnostics.js';
 
 export async function bootstrap() {
   const settingsRow = await col('settings').findOne({ id: 1 });
@@ -44,8 +45,9 @@ export async function bootstrap() {
 
 export const app = express();
 app.set('trust proxy', 1);
+app.use(attachRequestId);
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-app.use(cors({ origin: (o, cb) => cb(null, !o || config.corsOrigins.includes(o)), allowedHeaders: ['Content-Type', 'Authorization'], exposedHeaders: ['Retry-After'] }));
+app.use(cors({ origin: (o, cb) => cb(null, !o || config.corsOrigins.includes(o)), allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'], exposedHeaders: ['Retry-After', 'X-Request-ID'] }));
 app.use(express.json({ limit: '200kb' }));
 if (!config.isProd) app.use(morgan('dev'));
 app.use('/uploads', express.static(uploadDir, { maxAge: '7d', index: false }));

@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { config } from './config.js';
+import { logParentEnquiryFailure, logTeacherRegistrationFailure } from './teacherRegistrationDiagnostics.js';
 
 export class HttpError extends Error {
   constructor(status, message, details, code) { super(message); this.status = status; this.details = details; this.code = code; }
@@ -59,13 +60,24 @@ export const rejectHoneypot = (req, _res, next) => {
 
 export const notFound = (_req, _res, next) => next(new HttpError(404, 'Route not found.'));
 // eslint-disable-next-line no-unused-vars
-export const errorHandler = (err, _req, res, _next) => {
+export const errorHandler = (err, req, res, _next) => {
   const status = err.status || (err.name === 'MulterError' ? (err.code === 'LIMIT_FILE_SIZE' ? 413 : 400) : 500);
-  if (status >= 500) console.error('[error]', err.message);
+  const retryAfterSeconds = Number.isSafeInteger(err.retryAfterSeconds) && err.retryAfterSeconds > 0 ? err.retryAfterSeconds : null;
+  if (status === 429 && retryAfterSeconds) res.set?.('Retry-After', String(retryAfterSeconds));
+  const isTeacherRegistration = req.method === 'POST' && req.originalUrl?.split('?')[0] === '/api/public/teacher-registrations';
+  const isParentEnquiry = req.method === 'POST' && req.originalUrl?.split('?')[0] === '/api/public/parent-enquiries';
+  if (isTeacherRegistration) {
+    logTeacherRegistrationFailure({ requestId: req.requestId, stage: req.teacherRegistrationStage, status, error: err });
+  } else if (isParentEnquiry) {
+    logParentEnquiryFailure({ requestId: req.requestId, stage: req.parentEnquiryStage, status, error: err });
+  } else if (status >= 500) {
+    // Do not emit provider/database exception text; it can contain credentials or user data.
+    console.error(JSON.stringify({ event: 'request_failed', requestId: req.requestId || 'unavailable', status, category: 'internal_failure' }));
+  }
   const safeMessage = err.name === 'MulterError'
     ? (err.code === 'LIMIT_FILE_SIZE' ? `Each uploaded file must be ${config.teacherUploadMaxMb} MB or smaller.` : 'The uploaded files could not be processed.')
     : err instanceof HttpError ? err.message : status >= 500 ? 'Something went wrong on our side.' : err.message;
   res.status(status).json({ error: { code: err.code || err.details?.code || (status === 422 ? 'VALIDATION' : status === 401 ? 'UNAUTHORIZED' : 'ERROR'),
-    message: safeMessage, fields: err.details } });
+    message: safeMessage, fields: status === 429 ? undefined : err.details, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) } });
 };
 export { z };

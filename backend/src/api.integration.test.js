@@ -64,7 +64,7 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     await new Promise(resolve => server.once('listening', resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
     for (const origin of ['http://localhost:5173', 'https://tutor-at-home.vercel.app']) {
-      const preflight = await fetch(`${base}/api/admin/auth/login`, { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' } });
+      const preflight = await fetch(`${base}/api/admin/auth/login`, { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type,idempotency-key' } });
       assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
     }
     const untrustedPreflight = await fetch(`${base}/api/admin/auth/login`, { method: 'OPTIONS', headers: { origin: 'https://untrusted.example', 'access-control-request-method': 'POST' } });
@@ -136,14 +136,25 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     assert.ok(Number.isFinite(Date.parse(publicTerms.publishedAt)));
     assert.equal('publishedBy' in publicTerms, false);
 
-    const enquiryResponse = await fetch(`${base}/api/public/parent-enquiries`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+    const parentEnquiryBody = JSON.stringify({
       parentName: 'Integration Parent', phone: '9876543210', studentName: 'Student', studentClass: '10', board: 'CBSE',
       subjects: ['Mathematics'], examPreparations: [], city: 'Prayagraj', locality: 'Naini', mode: 'home', homeAddress: 'Private test address', pincode: '211008', latitude: 25.995, longitude: 80.0, preferredDays: [], notes: 'Test record', website: '',
-    }) });
+    });
+    const enquiryIdempotencyKey = 'de305d54-75b4-431b-adb2-eb6b9e546014';
+    const enquiryResponse = await fetch(`${base}/api/public/parent-enquiries`, { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': enquiryIdempotencyKey }, body: parentEnquiryBody });
     assert.equal(enquiryResponse.status, 201);
     const enquiry = await enquiryResponse.json();
     assert.match(enquiry.reference, /^ENQ-/);
     assert.equal(await col('enquiries').countDocuments({ reference: enquiry.reference }), 1);
+    const enquiryReplay = await fetch(`${base}/api/public/parent-enquiries`, { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': enquiryIdempotencyKey }, body: parentEnquiryBody });
+    assert.equal(enquiryReplay.status, 201);
+    assert.equal((await enquiryReplay.json()).reference, enquiry.reference);
+    assert.equal(await col('enquiries').countDocuments({}), 1);
+    const repeatPhoneEnquiry = await fetch(`${base}/api/public/parent-enquiries`, { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': 'd40f7b71-c2a8-4ab4-95f5-3a7a18014e23' }, body: JSON.stringify({ parentName: 'Integration Parent', phone: '+919876543210', studentName: 'Another Student', studentClass: '10', board: 'CBSE', subjects: ['Mathematics'], city: 'Prayagraj', mode: 'online' }) });
+    assert.equal(repeatPhoneEnquiry.status, 201);
+    assert.equal(await col('enquiries').countDocuments({}), 2);
+    const idempotencyConflict = await fetch(`${base}/api/public/parent-enquiries`, { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': enquiryIdempotencyKey }, body: JSON.stringify({ parentName: 'Different', phone: '9876543210', studentName: 'Student', studentClass: '10', board: 'CBSE', subjects: ['Mathematics'], city: 'Prayagraj', mode: 'online' }) });
+    assert.equal(idempotencyConflict.status, 409);
     const savedEnquiry = await col('enquiries').findOne({ reference: enquiry.reference });
     const savedEnquiryData = JSON.parse(savedEnquiry.data);
     assert.equal('website' in savedEnquiryData, false);
@@ -153,7 +164,7 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
       subjects: ['Mathematics'], examPreparations: [], city: 'Prayagraj', mode: 'online', preferredDays: [], website: 'https://spam.example',
     }) });
     assert.equal(honeypotResponse.status, 400);
-    assert.equal(await col('enquiries').countDocuments({}), 1);
+    assert.equal(await col('enquiries').countDocuments({}), 2);
 
     const teacherPayload = {
       website: '',
@@ -179,6 +190,7 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     const teacher = await teacherResponse.json();
     assert.match(teacher.reference, /^TCH-/);
     const savedTeacher = await col('teachers').findOne({ reference: teacher.reference });
+    assert.equal((await fetch(`${base}/api/admin/data-management/teacherRegistrations/${savedTeacher.id}/archive`, { method: 'POST', headers: { authorization: `Bearer ${token}` } })).status, 409);
     assert.ok(savedTeacher);
     const savedApplication = JSON.parse(savedTeacher.data);
     assert.deepEqual(savedApplication.location, { stateId: 'up-test', state: 'Uttar Pradesh', districtId: 'prayagraj-test', district: 'Prayagraj', localityId: 'naini-test', locality: 'Naini' });
@@ -238,14 +250,44 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     const loginResponse = await fetch(`${base}/api/admin/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: ` ${process.env.ADMIN_EMAIL.toUpperCase()} `, password: process.env.ADMIN_PASSWORD }) });
     assert.equal(loginResponse.status, 200);
     const { token } = await loginResponse.json(); assert.ok(token);
+    const { signToken } = await import('./middleware.js');
+    const cleanupFixtures = [
+      { id: 9901, reference: 'ENQ-DATA-MGMT-START', status: 'closed', parent_name: 'Cleanup fixture', phone: '9000000091', student_class: '10', city: 'Prayagraj', created_at: '2026-10-20T00:00:00.000Z', data: '{}' },
+      { id: 9902, reference: 'ENQ-DATA-MGMT-END', status: 'closed', parent_name: 'Cleanup fixture', phone: '9000000092', student_class: '10', city: 'Prayagraj', created_at: '2026-10-20T23:59:59.999Z', data: '{}' },
+      { id: 9904, reference: 'ENQ-DATA-MGMT-OPEN', status: 'in_progress', parent_name: 'Cleanup fixture', phone: '9000000094', student_class: '10', city: 'Prayagraj', created_at: '2026-10-20T12:00:00.000Z', data: '{}' },
+      { id: 9903, reference: 'ENQ-DATA-MGMT-NEXT', status: 'closed', parent_name: 'Cleanup fixture', phone: '9000000093', student_class: '10', city: 'Prayagraj', created_at: '2026-10-21T00:00:00.000Z', data: '{}' },
+    ];
+    await col('enquiries').insertMany(cleanupFixtures);
+    const viewerToken = signToken({ id: 9999, role: 'viewer', name: 'Viewer', email: 'viewer@example.test' });
+    const editorToken = signToken({ id: 987654, role: 'editor', name: 'Test editor', email: 'editor@example.test' });
+    assert.equal((await fetch(`${base}/api/admin/storage/summary`)).status, 401);
+    assert.equal((await fetch(`${base}/api/admin/storage/summary`, { headers: { authorization: `Bearer ${editorToken}` } })).status, 403);
+    await col('media').insertOne({ id: 9801, public_id: 'orphan-report-fixture', folder: 'tutorathome/test', original_name: 'report-only.png', created_at: '2026-10-20T12:00:00.000Z' });
+    await col('media').insertOne({ id: 9802, public_id: savedApplication.documents.aadhaarDocument.publicId, folder: 'tutorathome/test', original_name: 'referenced.png', created_at: '2026-10-20T12:00:00.000Z' });
+    const mediaReport = await fetch(`${base}/api/admin/storage/media-orphan-preview`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+    assert.equal(mediaReport.status, 200);
+    const mediaReportBody = await mediaReport.json(); assert.equal(mediaReportBody.mode, 'report_only'); assert.equal(mediaReportBody.deleteAvailable, false);
+    assert.equal(mediaReportBody.candidates.some(asset => asset.id === 9802), false);
+    assert.equal(await col('media').countDocuments({ id: 9801 }), 1);
+    assert.equal(await col('media').countDocuments({ id: 9802 }), 1);
+    const cleanupScope = { recordType: 'parentEnquiries', startDate: '2026-10-20', endDate: '2026-10-20' };
+    assert.equal((await fetch(`${base}/api/admin/data-management/preview`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${viewerToken}` }, body: JSON.stringify(cleanupScope) })).status, 403);
+    const previewResponse = await fetch(`${base}/api/admin/data-management/preview`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(cleanupScope) });
+    assert.equal(previewResponse.status, 200);
+    const cleanupPreview = await previewResponse.json(); assert.equal(cleanupPreview.count, 2); assert.equal(cleanupPreview.endInclusive, '2026-10-20T23:59:59.999Z');
+    assert.equal((await fetch(`${base}/api/admin/data-management/cleanup`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ ...cleanupScope, expectedCount: 3, expectedDigest: cleanupPreview.digest }) })).status, 409);
+    const cleanupResponse = await fetch(`${base}/api/admin/data-management/cleanup`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ ...cleanupScope, expectedCount: 2, expectedDigest: cleanupPreview.digest }) });
+    assert.equal(cleanupResponse.status, 200); assert.equal((await cleanupResponse.json()).archivedCount, 2);
+    assert.equal((await fetch(`${base}/api/admin/data-management/cleanup`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ ...cleanupScope, expectedCount: 2, expectedDigest: cleanupPreview.digest }) })).status, 409);
+    assert.equal(await col('enquiries').countDocuments({ id: { $in: [9901, 9902] }, archived_at: { $exists: true } }), 2);
+    assert.equal(await col('enquiries').countDocuments({ id: 9904, archived_at: { $exists: false } }), 1);
+    assert.equal(await col('enquiries').countDocuments({ id: 9903, archived_at: { $exists: false } }), 1);
     const publicFieldConfigResponse = await fetch(base + '/api/public/page-form-settings');
     assert.equal(publicFieldConfigResponse.status, 200);
     const publicFieldConfig = await publicFieldConfigResponse.json();
     assert.ok(publicFieldConfig.pages.findTutor.fields.parentName.visible);
     assert.ok(publicFieldConfig.pages.becomeTeacher.fields.personal.email.visible);
     assert.equal((await fetch(base + '/api/admin/page-form-settings')).status, 401);
-    const { signToken } = await import('./middleware.js');
-    const editorToken = signToken({ id: 987654, role: 'editor', name: 'Test editor', email: 'editor@example.test' });
     const protectedSettingsHeaders = { 'content-type': 'application/json' };
     assert.equal((await fetch(base + '/api/admin/leads/whatsapp', { method: 'PUT', headers: protectedSettingsHeaders, body: JSON.stringify({ whatsapp: '9876543210' }) })).status, 401);
     assert.equal((await fetch(base + '/api/admin/auth/password', { method: 'PUT', headers: protectedSettingsHeaders, body: JSON.stringify({ currentPassword: 'old', newPassword: 'Strong-new-password-123', confirmPassword: 'Strong-new-password-123' }) })).status, 401);
@@ -288,7 +330,6 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     assert.equal(noTermsAuth.status, 401);
     const noTermsDraftAuth = await fetch(`${base}/api/admin/terms/draft`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ content: ['Unauthorized'], expectedRevision: 1, expectedCurrentVersionId: 'teacher-terms-v1' }) });
     assert.equal(noTermsDraftAuth.status, 401);
-    const viewerToken = signToken({ id: 9999, role: 'viewer', name: 'Viewer', email: 'viewer@example.test' });
     const viewerTerms = await fetch(`${base}/api/admin/terms`, { headers: { authorization: `Bearer ${viewerToken}` } });
     assert.equal(viewerTerms.status, 403);
     const viewerTeacherDetails = await fetch(`${base}/api/admin/teachers/${savedTeacher.id}`, { headers: { authorization: `Bearer ${viewerToken}` } });
@@ -300,7 +341,14 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     const adminTerms = await adminTermsResponse.json();
     assert.equal(adminTerms.current.id, 'teacher-terms-v1');
     const oldTerms = [...adminTerms.current.content];
-    const draftTermsResponse = await fetch(`${base}/api/admin/terms/draft`, { method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ content: [...oldTerms, 'Integration-test draft condition.'], changeSummary: 'Integration test', expectedRevision: adminTerms.revision, expectedCurrentVersionId: adminTerms.current.id }) });
+    const longTerms = [...oldTerms, ...Array.from({ length: 60 }, (_, index) => `Integration test clause ${index + 1}.`), '19.2 Numbered subclause remains separate.', '19.3 Another numbered subclause remains separate.'];
+    const invalidTermsDraft = await fetch(`${base}/api/admin/terms/draft`, { method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ content: [], changeSummary: 'invalid terms test', expectedRevision: adminTerms.revision, expectedCurrentVersionId: adminTerms.current.id }) });
+    assert.equal(invalidTermsDraft.status, 422);
+    assert.ok((await invalidTermsDraft.json()).error.fields.content);
+    const invalidSummaryDraft = await fetch(`${base}/api/admin/terms/draft`, { method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ content: oldTerms, changeSummary: 'x'.repeat(301), expectedRevision: adminTerms.revision, expectedCurrentVersionId: adminTerms.current.id }) });
+    assert.equal(invalidSummaryDraft.status, 422);
+    assert.ok((await invalidSummaryDraft.json()).error.fields.changeSummary);
+    const draftTermsResponse = await fetch(`${base}/api/admin/terms/draft`, { method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ content: longTerms, changeSummary: 'Integration test', expectedRevision: adminTerms.revision, expectedCurrentVersionId: adminTerms.current.id }) });
     assert.equal(draftTermsResponse.status, 200);
     const draftTerms = await draftTermsResponse.json();
     const publicTermsBeforePublish = await (await fetch(`${base}/api/public/terms`)).json();
@@ -313,7 +361,7 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     assert.equal(publishedTerms.publishedBy.email, process.env.ADMIN_EMAIL);
     const currentTermsAfterPublish = await (await fetch(`${base}/api/public/terms`)).json();
     assert.equal(currentTermsAfterPublish.versionId, publishedTerms.versionId);
-    assert.equal(currentTermsAfterPublish.content.at(-1), 'Integration-test draft condition.');
+    assert.deepEqual(currentTermsAfterPublish.content, longTerms);
     assert.equal('publishedBy' in currentTermsAfterPublish, false);
     const oldVersionResponse = await fetch(`${base}/api/admin/terms/versions/teacher-terms-v1`, { headers: { authorization: `Bearer ${token}` } });
     assert.equal(oldVersionResponse.status, 200);
@@ -327,6 +375,14 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     assert.equal(unauthorizedFeaturedToggle.status, 401);
     const markFeatured = await fetch(`${base}/api/admin/teachers/9102/featured`, { method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ featured: true }) });
     assert.equal(markFeatured.status, 200);
+    assert.equal((await fetch(`${base}/api/admin/data-management/teacherRegistrations/9102/block`, { method: 'POST', headers: { authorization: `Bearer ${editorToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'Test block' }) })).status, 403);
+    const blockTeacher = await fetch(`${base}/api/admin/data-management/teacherRegistrations/9102/block`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'Integration test only' }) });
+    assert.equal(blockTeacher.status, 200);
+    const blockedFeatured = await (await fetch(`${base}/api/public/teachers?limit=48`)).json();
+    assert.equal(blockedFeatured.items.some(item => item.id === 9102), false);
+    assert.equal((await fetch(`${base}/api/admin/data-management/teacherRegistrations/9102/unblock`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}' })).status, 200);
+    const unblockedFeatured = await (await fetch(`${base}/api/public/teachers?limit=48`)).json();
+    assert.equal(unblockedFeatured.items.some(item => item.id === 9102), true);
     const newlyFeaturedRecord = await col('teachers').findOne({ id: 9102 });
     assert.equal(newlyFeaturedRecord.featured, 1);
     assert.match(newlyFeaturedRecord.public_photo_id, /^tutorathome\/teachers\//);
@@ -379,9 +435,45 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     assert.equal(oversizedUpload.status, 413);
     const me = await fetch(`${base}/api/admin/auth/me`, { headers: { authorization: `Bearer ${token}` } });
     assert.equal(me.status, 200);
+    assert.equal((await fetch(`${base}/api/admin/teachers/location-groups`)).status, 401);
+    const teacherGroupsResponse = await fetch(`${base}/api/admin/teachers/location-groups`, { headers: { authorization: `Bearer ${token}` } });
+    const teacherGroups = (await teacherGroupsResponse.json()).groups;
+    assert.equal(teacherGroupsResponse.status, 200);
+    assert.ok(teacherGroups.some(group => group.key === 'up-test:prayagraj-test'));
+    assert.ok(teacherGroups.some(group => group.key === 'unspecified' && group.count === 1));
+    const allTeacherResponse = await fetch(`${base}/api/admin/teachers`, { headers: { authorization: `Bearer ${token}` } });
+    const allTeacherBody = await allTeacherResponse.json();
+    assert.equal(allTeacherResponse.status, 200);
+    assert.equal(allTeacherBody.total, await col('teachers').countDocuments({ archived_at: { $exists: false } }));
+    assert.ok(allTeacherBody.items.some(item => item.id === savedTeacher.id && item.status === 'pending'));
+    assert.ok(allTeacherBody.items.some(item => item.id === 9104 && !item.registeredLocation));
+    const filteredTeacherPage = await fetch(`${base}/api/admin/teachers?stateId=up-test&districtId=prayagraj-test&localityId=naini-test&status=pending&page=1&limit=1`, { headers: { authorization: `Bearer ${token}` } });
+    const filteredTeacherBody = await filteredTeacherPage.json();
+    assert.equal(filteredTeacherPage.status, 200);
+    assert.ok(filteredTeacherBody.items.some(item => item.id === savedTeacher.id));
+    assert.equal(filteredTeacherBody.total, 1);
+    const enquiryGroupsResponse = await fetch(`${base}/api/admin/enquiries/location-groups`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(enquiryGroupsResponse.status, 200);
+    const enquiryGroups = (await enquiryGroupsResponse.json()).groups;
+    assert.ok(enquiryGroups.some(group => group.district === 'Prayagraj' && group.state === 'Uttar Pradesh' && group.count === 1));
     const enquiryList = await fetch(`${base}/api/admin/enquiries`, { headers: { authorization: `Bearer ${token}` } });
     assert.equal(enquiryList.status, 200);
-    assert.equal((await enquiryList.json()).total, 1);
+    const enquiryListBody = await enquiryList.json();
+    assert.equal(enquiryListBody.total, 1);
+    assert.equal(enquiryListBody.items[0].status, 'new');
+    assert.ok(Number.isFinite(Date.parse(enquiryListBody.items[0].createdAt)));
+    const dashboardResponse = await fetch(`${base}/api/admin/dashboard`, { headers: { authorization: `Bearer ${token}` } });
+    const dashboardBody = await dashboardResponse.json();
+    assert.equal(dashboardResponse.status, 200);
+    assert.equal(dashboardBody.totalEnquiries, enquiryListBody.total);
+    assert.equal(dashboardBody.recentEnquiries[0].id, savedEnquiry.id);
+    assert.equal(dashboardBody.recentEnquiries[0].createdAt, enquiryListBody.items[0].createdAt);
+    assert.equal(dashboardBody.recentEnquiries[0].status, 'new');
+    const markReviewedResponse = await fetch(`${base}/api/admin/enquiries/${savedEnquiry.id}`, { method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ status: 'contacted' }) });
+    assert.equal(markReviewedResponse.status, 200);
+    const reviewedListResponse = await fetch(`${base}/api/admin/enquiries`, { headers: { authorization: `Bearer ${token}` } });
+    const reviewedListBody = await reviewedListResponse.json();
+    assert.equal(reviewedListBody.items[0].status, 'contacted');
     const privateEnquiryDetails = await fetch(`${base}/api/admin/enquiries/${savedEnquiry.id}`, { headers: { authorization: `Bearer ${token}` } });
     assert.equal(privateEnquiryDetails.status, 200);
     const privateEnquiryBody = await privateEnquiryDetails.json();

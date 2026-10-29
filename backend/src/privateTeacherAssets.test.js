@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { v2 as cloudinary } from 'cloudinary';
-import { deletePrivateTeacherAsset, uploadPrivateTeacherAsset } from './cloudinary.js';
+import { assertTeacherAssetMetadata, deletePrivateTeacherAsset, uploadPrivateTeacherAsset } from './cloudinary.js';
 
 test('teacher application assets upload and delete using authenticated Cloudinary delivery', async () => {
   const originalUpload = cloudinary.uploader.upload_stream;
@@ -33,4 +33,44 @@ test('private teacher asset upload failures are surfaced to the registration wor
     cloudinary.uploader.upload_stream = (_options, callback) => ({ end() { callback(new Error('provider failure')); } });
     await assert.rejects(uploadPrivateTeacherAsset(Buffer.from('x'), { folder: 'profile-photos', resourceType: 'image' }), /provider failure/);
   } finally { cloudinary.uploader.upload_stream = originalUpload; }
+});
+
+test('all three teacher upload types use authenticated Cloudinary options and validate returned metadata', async () => {
+  const originalUpload = cloudinary.uploader.upload_stream;
+  const uploads = [];
+  const fixtures = [
+    { folder: 'profile-photos', resourceType: 'image', format: undefined, returnedFormat: 'png', publicIdSuffix: false },
+    { folder: 'qualification-proofs', resourceType: 'raw', format: 'pdf', returnedFormat: 'pdf', publicIdSuffix: true },
+    { folder: 'identity-documents', resourceType: 'raw', format: 'jpg', returnedFormat: 'jpg', publicIdSuffix: true },
+  ];
+  try {
+    cloudinary.uploader.upload_stream = (options, callback) => ({ end(buffer) {
+      uploads.push({ options, byteLength: buffer.length });
+      callback(null, { public_id: `${options.folder}/${options.public_id}`, format: options.resource_type === 'image' ? 'png' : options.public_id.endsWith('.pdf') ? 'pdf' : 'jpg' });
+    } });
+    for (const fixture of fixtures) {
+      const asset = await uploadPrivateTeacherAsset(Buffer.from('synthetic non-sensitive test bytes'), {
+        folder: fixture.folder, resourceType: fixture.resourceType, ...(fixture.format ? { format: fixture.format } : {}),
+      });
+      assert.equal(assertTeacherAssetMetadata(asset, fixture.returnedFormat), asset);
+    }
+    for (let index = 0; index < fixtures.length; index++) {
+      const { options, byteLength } = uploads[index];
+      const fixture = fixtures[index];
+      assert.equal(options.resource_type, fixture.resourceType);
+      assert.equal(options.type, 'authenticated');
+      assert.equal(options.folder, `tutorathome/private/teacher-applications/${fixture.folder}`);
+      assert.equal(options.overwrite, false);
+      assert.equal(byteLength, Buffer.byteLength('synthetic non-sensitive test bytes'));
+      assert.equal(options.public_id.endsWith('.pdf') || options.public_id.endsWith('.jpg'), fixture.publicIdSuffix);
+    }
+  } finally { cloudinary.uploader.upload_stream = originalUpload; }
+});
+
+test('verified local format permits raw Cloudinary metadata without format but rejects missing ids and returned mismatches', () => {
+  const rawAsset = { public_id: 'private/test.pdf', resource_type: 'raw' };
+  assert.equal(assertTeacherAssetMetadata(rawAsset, 'pdf'), rawAsset);
+  assert.throws(() => assertTeacherAssetMetadata({ format: 'pdf' }, 'pdf'), error => error.code === 'CLOUDINARY_METADATA_INCOMPLETE');
+  assert.throws(() => assertTeacherAssetMetadata({ public_id: 'private/test.pdf', format: 'png' }, 'pdf'), error => error.code === 'CLOUDINARY_FORMAT_MISMATCH');
+  assert.equal(assertTeacherAssetMetadata({ public_id: 'private/test.jpg', format: 'jpeg' }, 'jpg').format, 'jpeg');
 });

@@ -34,6 +34,8 @@ Set the `sync: false` values in the Render dashboard. Do not paste real credenti
 | `CLOUDINARY_ENABLED` | Defaults to enabled in production; Render config sets it to `true`. If enabled, the three Cloudinary values below are required. |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Required when Cloudinary uploads are enabled. Keep the API secret server-side only. |
 | `FORM_RATE_LIMIT_MAX`, `FORM_RATE_LIMIT_WINDOW_MIN` | Optional; default to 5 public form requests per 15 minutes. Forms also include a server-checked honeypot field. |
+| `PARENT_ENQUIRY_PHONE_RATE_LIMIT_MAX`, `PARENT_ENQUIRY_PHONE_RATE_LIMIT_WINDOW_HOURS` | Optional; successful parent enquiries default to 3 per normalized phone number in a rolling 24-hour window. |
+| `PARENT_ENQUIRY_IP_RATE_LIMIT_MAX`, `PARENT_ENQUIRY_IP_RATE_LIMIT_WINDOW_HOURS` | Optional; successful parent enquiries default to 20 per IP in a rolling 24-hour window. Phone and IP event records are HMAC-keyed and their updates commit in the same MongoDB transaction as the enquiry; idempotent replays do not count again. |
 | `TEACHER_UPLOAD_MAX_MB` | Optional per-file teacher document limit; defaults to 5 MB and accepts whole numbers from 1 to 20. |
 
 On Vercel, set `VITE_API_BASE_URL` to `<Render HTTPS origin>/api`. Never add `JWT_SECRET`, `MONGODB_URI`, admin passwords, or Cloudinary API secrets to Vercel `VITE_` variables.
@@ -57,3 +59,12 @@ The five existing teacher conditions are migrated at startup to immutable publis
 Production requires a strong `JWT_SECRET` (32+ characters) and `MONGODB_URI`. Never commit `.env` or place database credentials in source code.
 
 See [API.md](./API.md) for the HTTP contract.
+# Admin data safety and teacher duplicate identifiers
+
+Teacher-registration duplicate protection compares normalized email and phone for every existing status (including rejected, blocked, and archived records). New registrations write `email_normalized` and `phone_normalized`; sparse unique indexes make concurrent requests safe. Older records are checked by the registration endpoint while their normalized fields are absent.
+
+Before backfilling existing records, run `npm run audit:teacher-duplicates` from `backend/`. It is read-only and prints only aggregate duplicate-group counts. If any groups are reported, manually review and resolve them through the approved business process; the script does not print personal identifiers, delete records, or merge applications. After resolving conflicts, run `npm run migrate:teacher-identifiers` to backfill normalized keys and verify unique indexes. Do not run this against production until the duplicate report has been reviewed.
+
+The admin Data Management and Storage Management panels are limited to the `admin` role. Archive is reversible and preserves records and related files. Bulk date cleanup is UTC with an inclusive end date; it is limited to closed enquiries and rejected teacher applications, rechecks the exact preview scope, and updates in batches of 250 (up to 5,000 records) inside a transaction. It never permanently deletes records. Each archive/block/unblock/restore action and bulk scope is written to `admin_actions`. A parent block applies to that enquiry record only; it does not create a phone-number ban.
+
+Storage overview returns MongoDB `dbStats` and Cloudinary usage only when the provider API reports a valid metric; otherwise the UI says `Usage unavailable`. Cloudinary orphan scanning is capped to 100 catalogued assets and report-only because legacy and concurrent references cannot be guaranteed absent. No bulk file deletion is exposed. This application does not verify Atlas backups; confirm backup/PITR configuration in Atlas before any future permanent deletion policy is considered. No cleanup runs on startup.

@@ -52,6 +52,27 @@ export function uploadPrivateTeacherAsset(buffer, { folder, resourceType, format
   });
 }
 
+export function assertTeacherAssetMetadata(asset, verifiedFormat) {
+  if (typeof asset?.public_id !== 'string' || !asset.public_id.trim()) {
+    const error = new Error('Cloudinary upload returned no public asset identifier.');
+    error.code = 'CLOUDINARY_METADATA_INCOMPLETE';
+    throw error;
+  }
+  const expectedFormat = typeof verifiedFormat === 'string' ? verifiedFormat.toLowerCase() : '';
+  const returnedFormat = typeof asset.format === 'string' ? asset.format.toLowerCase() : '';
+  const normalizedExpected = expectedFormat === 'jpeg' ? 'jpg' : expectedFormat;
+  const normalizedReturned = returnedFormat === 'jpeg' ? 'jpg' : returnedFormat;
+  // Raw Cloudinary uploads may omit `format`; the source signature was already
+  // validated, so that verified format remains authoritative in the record.
+  // When Cloudinary does return a format, reject an actual mismatch.
+  if (normalizedReturned && expectedFormat && normalizedReturned !== normalizedExpected) {
+    const error = new Error('Cloudinary upload metadata format did not match the validated file.');
+    error.code = 'CLOUDINARY_FORMAT_MISMATCH';
+    throw error;
+  }
+  return asset;
+}
+
 export function deletePrivateTeacherAsset(publicId, resourceType) {
   if (!publicId || !['image', 'raw'].includes(resourceType)) return Promise.resolve(false);
   return cloudinary.uploader.destroy(publicId, { resource_type: resourceType, type: 'authenticated', invalidate: true })
@@ -72,6 +93,40 @@ export async function deleteCloudImage(publicId) {
   if (!config.cloudinaryEnabled || !publicId) return false;
   const result = await cloudinary.uploader.destroy(publicId, { resource_type: 'image', invalidate: true });
   return result.result === 'ok' || result.result === 'not found';
+}
+
+export async function cloudinaryStorageUsageBytes() {
+  if (!config.cloudinaryEnabled) return null;
+  try {
+    const usage = await cloudinary.api.usage();
+    return reportedCloudinaryStorageBytes(usage);
+  } catch {
+    return null;
+  }
+}
+
+export function reportedCloudinaryStorageBytes(usage) {
+  const bytes = usage?.storage?.usage;
+  return Number.isFinite(bytes) && bytes >= 0 ? bytes : null;
+}
+
+export async function listCloudinaryInventoryAssets({ maxPagesPerType = 3 } = {}) {
+  if (!config.cloudinaryEnabled) return null;
+  const assets = []; let truncated = false;
+  try {
+    for (const resource_type of ['image', 'raw', 'video']) for (const type of ['upload', 'authenticated', 'private']) {
+      let next_cursor = null, pages = 0;
+      do {
+        const response = await cloudinary.api.resources({ resource_type, type, max_results: 500, ...(next_cursor ? { next_cursor } : {}) });
+        for (const asset of response.resources || []) assets.push({ ...asset, resource_type, type });
+        next_cursor = response.next_cursor || null; pages += 1;
+        if (next_cursor && pages >= maxPagesPerType) { truncated = true; break; }
+      } while (next_cursor);
+    }
+    return { assets, truncated };
+  } catch {
+    return null;
+  }
 }
 
 export function optimizedCloudImage(publicId, { width = 1200, height, crop = 'limit' } = {}) {

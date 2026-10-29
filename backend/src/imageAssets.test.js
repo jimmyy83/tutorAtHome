@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { storeCloudMedia, validateImageFile } from './imageAssets.js';
+import { containsValue, storeCloudMedia, validateImageFile } from './imageAssets.js';
+import { reportedCloudinaryStorageBytes } from './cloudinary.js';
 import { v2 as cloudinary } from 'cloudinary';
 
 function png(width = 256, height = 256) {
@@ -30,6 +31,21 @@ function png(width = 256, height = 256) {
 }
 
 const imageFile = (buffer = png(), mimetype = 'image/png') => ({ buffer, mimetype, size: buffer.length, originalname: 'profile.png' });
+
+test('reference scan finds IDs and URLs nested in private teacher documents and enquiry content', () => {
+  const teacherApplication = { documents: { aadhaarDocument: { publicId: 'private-id' }, qualificationProof: { publicId: 'proof-id' } } };
+  const enquiry = { attachment: { fileUrl: 'https://media.example/image' } };
+  assert.equal(containsValue(teacherApplication, 'private-id'), true);
+  assert.equal(containsValue(teacherApplication, 'proof-id'), true);
+  assert.equal(containsValue(enquiry, 'https://media.example/image'), true);
+  assert.equal(containsValue(teacherApplication, 'unrelated-id'), false);
+});
+
+test('Cloudinary storage metrics use provider-reported bytes or remain unavailable', () => {
+  assert.equal(reportedCloudinaryStorageBytes({ storage: { usage: 1024 } }), 1024);
+  assert.equal(reportedCloudinaryStorageBytes({ storage: { usage: 'about 1 KB' } }), null);
+  assert.equal(reportedCloudinaryStorageBytes({}), null);
+});
 
 test('accepts a correctly signed PNG with valid dimensions', async () => {
   assert.deepEqual(await validateImageFile(imageFile()), { mime: 'image/png', width: 256, height: 256 });

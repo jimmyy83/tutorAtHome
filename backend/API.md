@@ -39,3 +39,13 @@ Roles: `admin` (everything), `editor` (content, banners, media, featured teacher
 - Popup dismissal/frequency is enforced in the browser (sessionStorage / localStorage keyed by `dismissKey`); the API only supplies the rules.
 
 Cloudinary uploads require backend-only `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`. Set `CLOUDINARY_ENABLED=true` to enable in development. Production enables uploads by default and fails startup if credentials are missing. Teacher application photos and qualification files use authenticated delivery and can only be retrieved through editor-authorized admin routes; public teacher, owner, and banner APIs do not include application documents. No separate admin-profile photo feature exists; the existing public owner profile photo is managed in the CMS content editor. Public teacher, owner, and banner APIs return optimized image URLs and do not expose Cloudinary credentials.
+# Admin data management (admin role)
+
+- `GET /api/admin/data-management/summary` returns aggregate active/blocked/archived counts and recent action metadata.
+- `POST /api/admin/data-management/preview` with `{ "recordType": "parentEnquiries" | "teacherRegistrations", "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD" }` previews `created_at` records in UTC, with an inclusive end date. Only closed enquiries and rejected teacher applications are eligible.
+- `POST /api/admin/data-management/cleanup` accepts the preview fields plus `expectedCount` and `expectedDigest`; it refuses stale or over-5,000-record scopes. Records are soft-archived in batches of 250 in a transaction; no records or files are permanently deleted.
+- `POST /api/admin/data-management/{recordType}/{id}/block` accepts `{ "reason": "..." }`; `/unblock`, `/archive` and `/restore` manage record state. All require the `admin` role. Pending/approved teacher records and open enquiries cannot be archived.
+- `GET /api/admin/storage/summary` returns MongoDB `dbStats`, Cloudinary usage when available, and database record/document counts. Missing provider metrics are `null` and are not estimated.
+- `POST /api/admin/storage/media-orphan-preview` runs a capped, report-only scan of up to 100 catalogued public assets against known references. Bulk Cloudinary deletion is intentionally unavailable.
+
+Parent enquiry POST accepts an optional `Idempotency-Key` UUID header. Replaying the same key and same normalized payload returns the original reference; using that key with different details returns `409`. The key is scoped to this application and stores only a SHA-256 payload digest and response metadata.

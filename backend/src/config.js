@@ -17,6 +17,10 @@ export const config = {
   cloudinaryEnabled: env.CLOUDINARY_ENABLED ? env.CLOUDINARY_ENABLED === 'true' : (env.NODE_ENV === 'production' || Boolean(env.CLOUDINARY_CLOUD_NAME || env.CLOUDINARY_API_KEY || env.CLOUDINARY_API_SECRET)),
   formLimitMax: Number(env.FORM_RATE_LIMIT_MAX || 5),
   formLimitWindowMin: Number(env.FORM_RATE_LIMIT_WINDOW_MIN || 15),
+  parentEnquiryPhoneLimitMax: Number(env.PARENT_ENQUIRY_PHONE_RATE_LIMIT_MAX || 3),
+  parentEnquiryPhoneLimitWindowHours: Number(env.PARENT_ENQUIRY_PHONE_RATE_LIMIT_WINDOW_HOURS || 24),
+  parentEnquiryIpLimitMax: Number(env.PARENT_ENQUIRY_IP_RATE_LIMIT_MAX || 20),
+  parentEnquiryIpLimitWindowHours: Number(env.PARENT_ENQUIRY_IP_RATE_LIMIT_WINDOW_HOURS || 24),
   teacherUploadMaxMb: Number(env.TEACHER_UPLOAD_MAX_MB || 5),
   teacherUploadMaxBytes: Number(env.TEACHER_UPLOAD_MAX_MB || 5) * 1024 * 1024,
 };
@@ -46,3 +50,9 @@ if (config.isProd && config.cloudinaryEnabled && [config.cloudinaryCloudName, co
 if (config.mongoUri && !/^mongodb(?:\+srv)?:\/\//i.test(config.mongoUri)) throw new Error('MONGODB_URI must use the mongodb:// or mongodb+srv:// scheme.');
 
 if (!Number.isInteger(config.teacherUploadMaxMb) || config.teacherUploadMaxMb < 1 || config.teacherUploadMaxMb > 20) throw new Error('TEACHER_UPLOAD_MAX_MB must be a whole number from 1 to 20.');
+for (const [name, value, max] of [
+  ['PARENT_ENQUIRY_PHONE_RATE_LIMIT_MAX', config.parentEnquiryPhoneLimitMax, 1000],
+  ['PARENT_ENQUIRY_PHONE_RATE_LIMIT_WINDOW_HOURS', config.parentEnquiryPhoneLimitWindowHours, 720],
+  ['PARENT_ENQUIRY_IP_RATE_LIMIT_MAX', config.parentEnquiryIpLimitMax, 10000],
+  ['PARENT_ENQUIRY_IP_RATE_LIMIT_WINDOW_HOURS', config.parentEnquiryIpLimitWindowHours, 720],
+]) if (!Number.isInteger(value) || value < 1 || value > max) throw new Error(`${name} must be a whole number from 1 to ${max}.`);

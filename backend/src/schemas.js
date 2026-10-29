@@ -70,7 +70,9 @@ export const teacherRegistrationSchema = z.object({
 }).strict();
 
 export const teacherTermsDraftSchema = z.object({
-  content: z.array(z.string().trim().min(1).max(3000)).min(1).max(50),
+  content: z.array(z.string().min(1).max(3000).refine(value => value.trim().length > 0, { error: 'Each terms condition must contain non-whitespace text.' }))
+    .min(1, { error: 'Enter at least one terms condition.' })
+    .max(500, { error: 'Use no more than 500 terms conditions.' }),
   changeSummary: str(300).optional().default(''),
   expectedRevision: z.number().int().nonnegative(),
   expectedCurrentVersionId: req('Current terms version', 100),
@@ -132,6 +134,18 @@ export const settingsSchema = z.object({ socialLinks: socialLinksSchema.optional
 export const pageFormDraftSchema = z.object({ expectedRevision: z.number().int().nonnegative(), expectedDraftRevision: z.number().int().nonnegative(), pages: z.record(z.string(), z.any()) }).strict();
 export const pageFormPublishSchema = z.object({ expectedRevision: z.number().int().nonnegative(), expectedDraftRevision: z.number().int().nonnegative() }).strict();
 export const teacherStatusSchema = z.object({ status: z.enum(['pending', 'approved', 'rejected']) });
+export const blockRecordSchema = z.object({ reason: req('Block reason', 500) }).strict();
+export const dataCleanupPreviewSchema = z.object({
+  recordType: z.enum(['parentEnquiries', 'teacherRegistrations']),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  mode: z.enum(['archive', 'permanent_delete']).default('archive'),
+}).strict();
+export const dataCleanupSchema = dataCleanupPreviewSchema.extend({ expectedCount: z.number().int().nonnegative(), expectedDigest: z.string().regex(/^[a-f0-9]{64}$/i) }).strict();
+export const permanentDeleteConfirmationSchema = z.object({ confirm: z.literal(true) }).strict();
+export const bulkPermanentDeleteSchema = dataCleanupSchema.extend({ confirmation: z.literal('DELETE') }).strict();
+export const archivedDeletePreviewSchema = z.object({ recordType: z.enum(['parentEnquiries', 'teacherRegistrations']), ids: z.array(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)).min(1).max(100) }).strict();
+export const archivedDeleteSchema = archivedDeletePreviewSchema.extend({ expectedCount: z.number().int().nonnegative(), expectedDigest: z.string().regex(/^[a-f0-9]{64}$/i), confirmation: z.literal('DELETE') }).strict();
 export const teacherFeaturedSchema = z.object({
   featured: z.boolean().optional(), featuredOrder: z.coerce.number().int().min(0).optional(),
   publicName: str(120).optional(), publicLocation: str(120).optional(), publicPhoto: str(500).optional(), publicPhotoId: str(240).optional(),

@@ -8,6 +8,8 @@
     "dev": "node --watch src/server.js",
     "seed": "node src/seed.js",
     "admin:reset-password": "node src/reset-admin-password.js",
+    "audit:teacher-duplicates": "node src/audit-teacher-duplicates.js",
+    "migrate:teacher-identifiers": "node src/audit-teacher-duplicates.js --apply",
     "migrate:sqlite": "node src/migrate-sqlite-to-mongo.js",
     "test": "node --test"
   },
