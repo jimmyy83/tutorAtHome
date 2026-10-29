@@ -46,3 +46,10 @@ test('NEW is based on the persisted status and clears after explicit review tran
   assert.equal(isNewParentEnquiry('contacted'), false);
   assert.equal(isNewParentEnquiry('in_progress'), false);
 });
+
+test('Enquiries list eligibility stays available after 24 hours and is not time-filtered', () => {
+  const oldEnquiry = { ...rows[0], created_at: '2026-10-27T00:00:00.000Z' };
+  const enquiriesFilter = buildAdminEnquiryFilter({ archived: 'false' });
+  assert.equal(Object.hasOwn(enquiriesFilter, 'created_at'), false);
+  assert.equal(matches(oldEnquiry, enquiriesFilter), true);
+});

@@ -21,6 +21,7 @@ import { assertPermanentDeleteEligible, executePermanentDelete, parsePermanentDe
 import { buildLocationGroups, locationForAdminRecord, matchesAdminLocation } from '../adminLocationGroups.js';
 import { buildAdminTeacherFilter } from '../adminTeachers.js';
 import { buildAdminEnquiryFilter } from '../adminEnquiries.js';
+import { hasTeacherProfilePhoto, teacherProfilePhotoVersion } from '../teacherProfilePhoto.js';
 
 export const adminRouter = Router();
 adminRouter.post('/auth/login', loginLimiter, validate(S.loginSchema), wrap(async (req, res) => {
@@ -393,7 +394,7 @@ adminRouter.delete('/media/:id', editor, wrap(async (req, res) => {
 
 const locationSettings = async () => json((await col('settings').findOne({ id: 1 }))?.data, {})?.locationCatalog || { states: [] };
 const teacherListRow = (t, catalog) => ({ id: t.id, reference: t.reference, status: t.status, blocked: !!t.blocked, archived: !!t.archived_at, fullName: t.full_name, email: t.email, phone: t.phone, featured: !!t.featured,
-  featuredOrder: t.featured_order, publicName: t.public_name, publicLocation: t.public_location, publicPhoto: t.public_photo, publicPhotoId: t.public_photo_id || '', locationStateId: t.location_state_id || '', locationDistrictId: t.location_district_id || '', locationLocalityId: t.location_locality_id || '', registeredLocation: locationForAdminRecord(t, catalog, 'teachers'), publicSubjects: json(t.public_subjects, []), publicLevels: json(t.public_levels, []), createdAt: t.created_at, featuredEligible: t.status === 'approved' });
+  featuredOrder: t.featured_order, publicName: t.public_name, publicLocation: t.public_location, publicPhoto: t.public_photo, hasProfilePhoto: hasTeacherProfilePhoto(t.data), profilePhotoVersion: teacherProfilePhotoVersion(t.data), publicPhotoId: t.public_photo_id || '', locationStateId: t.location_state_id || '', locationDistrictId: t.location_district_id || '', locationLocalityId: t.location_locality_id || '', registeredLocation: locationForAdminRecord(t, catalog, 'teachers'), publicSubjects: json(t.public_subjects, []), publicLevels: json(t.public_levels, []), createdAt: t.created_at, featuredEligible: t.status === 'approved' });
 const safeRegex = v => new RegExp(escapeRegex(v), 'i');
 adminRouter.get('/teachers/location-groups', auth, wrap(async (req, res) => {
   const filter = buildAdminTeacherFilter(req.query);

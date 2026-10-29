@@ -445,7 +445,10 @@ test('MongoDB CRUD, auth, and public/admin API integration', { skip: !testUri },
     const allTeacherBody = await allTeacherResponse.json();
     assert.equal(allTeacherResponse.status, 200);
     assert.equal(allTeacherBody.total, await col('teachers').countDocuments({ archived_at: { $exists: false } }));
-    assert.ok(allTeacherBody.items.some(item => item.id === savedTeacher.id && item.status === 'pending'));
+    const savedTeacherListItem = allTeacherBody.items.find(item => item.id === savedTeacher.id);
+    assert.equal(savedTeacherListItem.status, 'pending');
+    assert.equal(savedTeacherListItem.hasProfilePhoto, true);
+    assert.equal('profilePhoto' in savedTeacherListItem, false, 'the list exposes availability only, not a private URL or asset reference');
     assert.ok(allTeacherBody.items.some(item => item.id === 9104 && !item.registeredLocation));
     const filteredTeacherPage = await fetch(`${base}/api/admin/teachers?stateId=up-test&districtId=prayagraj-test&localityId=naini-test&status=pending&page=1&limit=1`, { headers: { authorization: `Bearer ${token}` } });
     const filteredTeacherBody = await filteredTeacherPage.json();
