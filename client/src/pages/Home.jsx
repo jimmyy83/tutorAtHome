@@ -41,7 +41,7 @@ export default function Home() {
   const sections = content?.sections || [];
   const cms = id => sections.find(section => section.id === id);
   const hero = cms('hero'), how = cms('how'), teachers = cms('teachers'), owner = cms('owner') || siteInfo.owner;
-  const [heroCopy,setHeroCopy]=useState(null);
+  const [heroCopy,setHeroCopy]=useState(()=>resolveHomeHeroCopy(hero));
   useEffect(()=>{if(!siteLoading)setHeroCopy(current=>retainInitialHomeHeroCopy(current,resolveHomeHeroCopy(hero)));},[siteLoading,hero]);
   const why = cms('benefits'), subjects = cms('subjects'), cta = cms('cta');
   const visible = section => section?.visible !== false;
@@ -62,8 +62,8 @@ export default function Home() {
       <div className="relative z-10 mx-auto grid max-w-7xl items-center gap-12 px-5 pb-20 pt-14 sm:px-8 md:min-h-[630px] md:grid-cols-[1.05fr_.95fr] md:gap-8 md:pb-24 md:pt-16">
         <ScrollReveal direction="left" className="hero-copy relative z-10 max-w-2xl">
           <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[.06] px-3.5 py-2 text-xs font-semibold tracking-wide text-blue-100"><Sparkles size={14} className="text-rose-300"/> PERSONAL LEARNING, RIGHT AT HOME</div>
-          <div aria-busy={!heroCopy} className="min-h-64">
-            {heroCopy ? <><h1 className="max-w-xl text-[2.7rem] font-semibold leading-[1.06] tracking-[-.045em] sm:text-6xl lg:text-[4.4rem]">{heroCopy.title}</h1><p className="mt-6 max-w-lg text-base leading-7 text-slate-300 sm:text-lg">{heroCopy.description}</p></> : <div aria-hidden="true" className="min-h-64 animate-pulse pt-1"><div className="h-12 max-w-[25rem] rounded-lg bg-white/[.07] sm:h-16"/><div className="mt-6 h-14 max-w-lg rounded-lg bg-white/[.05]"/></div>}
+          <div className="min-h-64">
+            <h1 className="max-w-xl text-[2.7rem] font-semibold leading-[1.06] tracking-[-.045em] sm:text-6xl lg:text-[4.4rem]">{heroCopy.title}</h1><p className="mt-6 max-w-lg text-base leading-7 text-slate-300 sm:text-lg">{heroCopy.description}</p>
           </div>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row"><SiteLink to={heroCopy?.primaryCta.url || '/parent-enquiry'} className="brand-cta group inline-flex min-h-12 items-center justify-center gap-2 rounded-full px-6 font-semibold text-white transition hover:-translate-y-0.5">{heroCopy?.primaryCta.label || 'Find a tutor'} <ArrowRight size={17} className="transition group-hover:translate-x-1"/></SiteLink><SiteLink to={heroCopy?.secondaryCta.url || '/teacher-registration'} className="hero-secondary-cta inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-white/25 px-6 font-semibold text-white transition hover:bg-white/10">{heroCopy?.secondaryCta.label || 'Become a teacher'} <MoveUpRight size={16}/></SiteLink></div>
           <div className="mt-11 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-200 sm:gap-2.5"><span className="rounded-full border border-white/15 bg-white/[.06] px-3 py-2">Nursery to Class 12</span><span className="rounded-full border border-white/15 bg-white/[.06] px-3 py-2">Home tutoring</span><span className="rounded-full border border-white/15 bg-white/[.06] px-3 py-2">Personalised subject guidance</span></div>

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { updateAdminSearch } from '../utils/adminSearch.js';
 
 const input = 'min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-800';
@@ -5,6 +6,13 @@ const input = 'min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm
 export default function AdminLocationGroupFilter({ type, groups = [], selectedGroup = '', onGroupChange, locality = '', onLocalityChange, status = '', onStatusChange, blocked = '', onBlockedChange, archived = 'false', onArchivedChange, search = '', onSearchChange, page = 1, totalPages = 1, onPageChange }) {
   const group = groups.find(item => item.key === selectedGroup);
   const statuses = type === 'teachers' ? ['pending', 'approved', 'rejected'] : ['new', 'contacted', 'in_progress', 'matched', 'closed'];
+  const [searchDraft, setSearchDraft] = useState(search);
+  useEffect(() => setSearchDraft(search), [search]);
+  useEffect(() => {
+    if (searchDraft === search) return undefined;
+    const timer = setTimeout(() => updateAdminSearch(searchDraft, onSearchChange, () => onPageChange(1)), 250);
+    return () => clearTimeout(timer);
+  }, [searchDraft, search, onSearchChange, onPageChange]);
   return <section aria-label={`${type === 'teachers' ? 'Teacher' : 'Parent lead'} location filters`} className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
     <h2 className="text-sm font-semibold text-slate-900">Organize by district</h2>
     <div className="mt-3 flex flex-wrap gap-2">
@@ -14,7 +22,7 @@ export default function AdminLocationGroupFilter({ type, groups = [], selectedGr
       </button>)}
     </div>
     <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-      <label className="grid gap-1 text-xs font-medium text-slate-600">Search<input type="search" autoComplete="off" className={input} value={search} onChange={event => updateAdminSearch(event.target.value,onSearchChange,()=>onPageChange(1))} placeholder="Name, phone or reference"/></label>
+      <label className="grid gap-1 text-xs font-medium text-slate-600">Search<input type="search" autoComplete="off" className={input} value={searchDraft} onChange={event => setSearchDraft(event.target.value)} placeholder="Name, phone or reference"/></label>
       <label className="grid gap-1 text-xs font-medium text-slate-600">Status<select className={input} value={status} onChange={event => onStatusChange(event.target.value)}><option value="">All statuses</option>{statuses.map(value => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}</select></label>
       <label className="grid gap-1 text-xs font-medium text-slate-600">Block state<select className={input} value={blocked} onChange={event => onBlockedChange(event.target.value)}><option value="">All</option><option value="false">Not blocked</option><option value="true">Blocked</option></select></label>
       <label className="grid gap-1 text-xs font-medium text-slate-600">Record state<select className={input} value={archived} onChange={event => onArchivedChange(event.target.value)}><option value="false">Active records</option><option value="true">Archived records</option><option value="all">Active and archived</option></select></label>

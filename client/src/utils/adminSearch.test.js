@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { isCurrentAdminLoad, setAdminSearchParameter, shouldShowAdminLoading, updateAdminSearch } from './adminSearch.js';
+import { adminLoadKey, isCurrentAdminLoad, resolveAdminLoadRequest, setAdminSearchParameter, shouldShowAdminLoading, shouldVerifyStoredAdminToken, updateAdminSearch } from './adminSearch.js';
 
 test('typing multiple characters in either admin search only updates React search state', () => {
   for (const tab of ['teachers', 'enquiries']) {
@@ -29,7 +29,8 @@ test('district filter renders a controlled search input outside any submitting f
   const source = fs.readFileSync(fileURLToPath(new URL('../components/AdminLocationGroupFilter.jsx', import.meta.url)), 'utf8');
   assert.match(source, /type="search"/);
   assert.doesNotMatch(source, /<form\b|onSubmit=|window\.location|location\.href/);
-  assert.match(source, /value=\{search\}\s+onChange=\{event\s*=>\s*updateAdminSearch\(event\.target\.value,onSearchChange,\(\)=>onPageChange\(1\)\)\}/);
+  assert.match(source, /value=\{searchDraft\}\s+onChange=\{event\s*=>\s*setSearchDraft\(event\.target\.value\)\}/);
+  assert.match(source, /setTimeout\(\(\)\s*=>\s*updateAdminSearch\(\s*searchDraft\s*,\s*onSearchChange\s*,\s*\(\)\s*=>\s*onPageChange\(1\)\s*\)\s*,\s*250\)/);
   assert.match(source, /type="button"/);
 });
 
@@ -44,4 +45,24 @@ test('search refetches do not replace the already-loaded admin tab with a full-p
 test('a stale search response cannot become the current admin result set', () => {
   assert.equal(isCurrentAdminLoad(11, 12), false);
   assert.equal(isCurrentAdminLoad(12, 12), true);
+});
+
+test('active-tab load keys ignore filter changes on the inactive admin tab', () => {
+  const teacherFilters = { status: 'pending', search: 'a', page: 1 };
+  const first = adminLoadKey('teachers', { ...teacherFilters, enquirySearch: '' });
+  const afterEnquiryTyping = adminLoadKey('teachers', { ...teacherFilters, enquirySearch: 'parent' });
+  assert.equal(first, afterEnquiryTyping);
+  assert.notEqual(first, adminLoadKey('teachers', { ...teacherFilters, search: 'alice' }));
+  assert.notEqual(adminLoadKey('enquiries', { search: 'alice' }), adminLoadKey('teachers', { search: 'alice' }));
+});
+
+test('manual refresh click events cannot be mistaken for stale request IDs', () => {
+  assert.equal(resolveAdminLoadRequest({ type: 'click' }, 8), 8);
+  assert.equal(resolveAdminLoadRequest(7, 8), 7);
+});
+
+test('only stored sessions need the follow-up session verification request', () => {
+  assert.equal(shouldVerifyStoredAdminToken('existing-session', ''), true);
+  assert.equal(shouldVerifyStoredAdminToken('login-response-token', 'login-response-token'), false);
+  assert.equal(shouldVerifyStoredAdminToken('', ''), false);
 });

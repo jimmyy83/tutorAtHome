@@ -1,6 +1,6 @@
 const fallbackHeroCopy = {
-  title: 'The right tutor. A brighter future.',
-  description: 'One-to-one learning shaped around your child’s class, subjects and schedule.',
+  title: 'Find the Right Tutor for Your Child',
+  description: 'Personalised learning and expert subject guidance for students from Nursery to Class 12.',
   primaryCta: { label: 'Find a tutor', url: '/parent-enquiry' },
   secondaryCta: { label: 'Become a teacher', url: '/teacher-registration' },
 };
@@ -21,5 +21,9 @@ export function resolveHomeHeroCopy(hero) {
 }
 
 export function retainInitialHomeHeroCopy(current, next) {
-  return current || next;
+  if (!current) return next;
+  if (current.title === next.title && current.description === next.description
+    && current.primaryCta.label === next.primaryCta.label && current.primaryCta.url === next.primaryCta.url
+    && current.secondaryCta.label === next.secondaryCta.label && current.secondaryCta.url === next.secondaryCta.url) return current;
+  return next;
 }

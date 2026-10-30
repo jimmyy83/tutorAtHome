@@ -66,8 +66,8 @@ test('teacher mutation refreshes do not mistake the API response for a load requ
   const source = fs.readFileSync(fileURLToPath(new URL('../pages/AdminPage.jsx', import.meta.url)), 'utf8');
   const end = source.indexOf('const changeEnquiryStatus');
   const handlers = source.slice(source.indexOf('const setTeacherLocation'), end);
-  assert.match(handlers, /teacherLocationPayload\(selection\),\{authToken:token\}\),\(\)=>load\(\)\)/);
-  assert.match(handlers, /\/status`,\{status\},\{authToken:token\}\),\(\)=>load\(\)\)/);
+  assert.match(handlers, /teacherLocationPayload\(selection\),\{authToken:token\}\),\(\)=>load\(\{forceGroups:true\}\)\)/);
+  assert.match(handlers, /\/status`,\{status\},\{authToken:token\}\),\(\)=>load\(\{forceGroups:true\}\)\)/);
   assert.match(handlers, /\{featured:!row\.featured\},\{authToken:token\}\),\(\)=>load\(\)\)/);
   assert.doesNotMatch(handlers, /\),load\);/, 'teacher mutation callbacks must not receive the API response as a request ID');
 });
