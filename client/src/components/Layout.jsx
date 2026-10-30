@@ -6,6 +6,7 @@ import {siteInfo} from '../data/siteInfo.js';
 import {buildWhatsAppUrl} from '../utils/whatsapp.js';
 import {ThemeToggle} from '../context/ThemeContext.jsx';
 import AnnouncementPopup from './AnnouncementPopup.jsx';
+import FloatingWhatsAppButton from './FloatingWhatsAppButton.jsx';
 import usePublicSite from '../hooks/usePublicSite.js';
 import SocialLinks from './SocialLinks.jsx';
 import {shouldShowGlobalFooter} from '../utils/footerVisibility.js';
@@ -38,4 +39,4 @@ function Footer({settings}){const phone=settings?.phone||contact.phone,email=set
  <div className="text-sm md:col-span-3"><p className="font-semibold text-white">Our offices</p><div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{offices.map((office,index)=><address key={`${office.city}-${index}`} className="not-italic leading-6 text-slate-400"><span className="mb-1 block font-medium text-slate-200">{office.city}</span>{office.address}{office.phone&&<a className="footer-link mt-2 block w-fit" href={`tel:${office.phoneLink||office.phone}`}>{office.phone}</a>}</address>)}</div></div>
  <div className="md:col-span-3"><SocialLinks links={settings?.socialLinks||[]} placement="footer" whatsappRecipient={settings?.whatsapp}/></div>
  </div><div className="border-t border-white/10"><p className="mx-auto flex max-w-7xl flex-col gap-1 px-5 py-4 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-8"><span>© {new Date().getFullYear()} TutorAtHome. All rights reserved.</span><span>Designed &amp; developed by Aroh Makers</span></p></div></footer>;}
-export default function Layout(){const publicSite=usePublicSite();const {pathname}=useLocation();return <><Navbar brandName={publicSite.settings?.brandName} logoUrl={publicSite.settings?.logoUrl}/><main id="main-content"><Outlet context={publicSite}/></main><AnnouncementPopup/>{shouldShowGlobalFooter(pathname)&&<Footer settings={publicSite.settings}/>}</>;}
+export default function Layout(){const publicSite=usePublicSite();const {pathname}=useLocation();return <><Navbar brandName={publicSite.settings?.brandName} logoUrl={publicSite.settings?.logoUrl}/><main id="main-content"><Outlet context={publicSite}/></main><AnnouncementPopup/>{pathname==='/'&&<FloatingWhatsAppButton recipient={publicSite.settings?.whatsapp}/>}{shouldShowGlobalFooter(pathname)&&<Footer settings={publicSite.settings}/>}</>;}
