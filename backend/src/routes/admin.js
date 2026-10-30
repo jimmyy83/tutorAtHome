@@ -19,6 +19,7 @@ import { getPageFormSettings, publishPageFormDraft, savePageFormDraft } from '..
 import { cleanupRecordFilter, processInBatches, utcInclusiveDateRange } from '../adminDataManagement.js';
 import { assertPermanentDeleteEligible, executePermanentDelete, parsePermanentDeleteId } from '../adminPermanentDelete.js';
 import { buildLocationGroups, locationForAdminRecord, matchesAdminLocation } from '../adminLocationGroups.js';
+import { fetchAdminPage, needsAdminLocationMatch } from '../adminRecordPagination.js';
 import { buildAdminTeacherFilter } from '../adminTeachers.js';
 import { buildAdminEnquiryFilter } from '../adminEnquiries.js';
 import { hasTeacherProfilePhoto, teacherProfilePhotoVersion } from '../teacherProfilePhoto.js';
@@ -404,7 +405,13 @@ adminRouter.get('/teachers/location-groups', auth, wrap(async (req, res) => {
 adminRouter.get('/teachers', auth, wrap(async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1), limit = Math.min(100, Number(req.query.limit) || 20), filter = buildAdminTeacherFilter(req.query);
   const catalog = await locationSettings();
-  const cursor = col('teachers').find(filter, { projection: { id: 1, reference: 1, status: 1, blocked: 1, archived_at: 1, full_name: 1, email: 1, phone: 1, featured: 1, featured_order: 1, public_name: 1, public_location: 1, public_photo: 1, public_photo_id: 1, location_state_id: 1, location_district_id: 1, location_locality_id: 1, public_subjects: 1, public_levels: 1, created_at: 1, data: 1 } }).sort({ created_at: -1, id: -1 });
+  const projection = { id: 1, reference: 1, status: 1, blocked: 1, archived_at: 1, full_name: 1, email: 1, phone: 1, featured: 1, featured_order: 1, public_name: 1, public_location: 1, public_photo: 1, public_photo_id: 1, location_state_id: 1, location_district_id: 1, location_locality_id: 1, public_subjects: 1, public_levels: 1, created_at: 1, data: 1 };
+  const sort = { created_at: -1, id: -1 };
+  if (!needsAdminLocationMatch(req.query)) {
+    const result = await fetchAdminPage(col('teachers'), { filter, projection, sort, page, limit });
+    return res.json({ ...result, items: result.items.map(doc => teacherListRow(doc, catalog)) });
+  }
+  const cursor = col('teachers').find(filter, { projection }).sort(sort);
   let total = 0; const pageItems = [];
   for await (const doc of cursor) if (matchesAdminLocation(locationForAdminRecord(doc, catalog, 'teachers'), req.query)) { if (total >= (page - 1) * limit && total < page * limit) pageItems.push(doc); total += 1; }
   res.json({ items: pageItems.map(doc => teacherListRow(doc, catalog)), page, limit, total, totalPages: Math.ceil(total / limit) });
@@ -511,7 +518,13 @@ adminRouter.get('/enquiries/location-groups', auth, wrap(async (req, res) => {
 adminRouter.get('/enquiries', auth, wrap(async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1), limit = Math.min(100, Number(req.query.limit) || 20), filter = buildAdminEnquiryFilter(req.query);
   const catalog = await locationSettings();
-  const cursor = col('enquiries').find(filter, { projection: { id: 1, reference: 1, status: 1, blocked: 1, archived_at: 1, parent_name: 1, phone: 1, student_class: 1, city: 1, created_at: 1, updated_at: 1, data: 1 } }).sort({ created_at: -1, id: -1 });
+  const projection = { id: 1, reference: 1, status: 1, blocked: 1, archived_at: 1, parent_name: 1, phone: 1, student_class: 1, city: 1, created_at: 1, updated_at: 1, data: 1 };
+  const sort = { created_at: -1, id: -1 };
+  if (!needsAdminLocationMatch(req.query)) {
+    const result = await fetchAdminPage(col('enquiries'), { filter, projection, sort, page, limit });
+    return res.json({ ...result, items: result.items.map(doc => enquiryRow(doc, catalog)) });
+  }
+  const cursor = col('enquiries').find(filter, { projection }).sort(sort);
   let total = 0; const pageItems = [];
   for await (const doc of cursor) if (matchesAdminLocation(locationForAdminRecord(doc, catalog, 'enquiries'), req.query)) { if (total >= (page - 1) * limit && total < page * limit) pageItems.push(doc); total += 1; }
   res.json({ items: pageItems.map(doc => enquiryRow(doc, catalog)), page, limit, total, totalPages: Math.ceil(total / limit) });
